@@ -1,0 +1,133 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Helvetica Neue",
+        Arial,
+        sans-serif;
+}
+
+/* =========================================================
+   Application layout
+   ========================================================= */
+
+#app {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: row;
+    position: relative;
+}
+
+/* =========================================================
+   Side panels
+   Fixed-width containers for metadata and charts
+   ========================================================= */
+
+.panel {
+    width: 20%;
+    height: 100%;
+    background: #ffffffdd;
+    box-sizing: border-box;
+    padding: 14px 12px;
+    flex-shrink: 0;
+    z-index: 10;
+    box-shadow: 10px 0 16px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+}
+
+#panel-left {
+    border-right: 1px solid #ddd;
+}
+
+/* =========================================================
+   Map viewport
+   Canvas for rendering, SVG for interaction overlay
+   ========================================================= */
+
+#map-wrapper {
+    position: relative;
+    flex: 1;
+    height: 100%;
+    overflow: hidden;
+}
+
+#mapCanvas,
+#overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+/* =========================================================
+   Loading overlay
+   Blocks interaction while application initializes
+   ========================================================= */
+
+#loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    pointer-events: all;
+}
+
+/* =========================================================
+   Loading spinner
+   Icon-based rotation for visual stability across GPUs
+   ========================================================= */
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 14px;
+
+    background-image: url("../assets/icon.png");
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+
+    animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* =========================================================
+   Loading message
+   ========================================================= */
+
+.loading-text {
+    font-size: 14px;
+    color: #444444;
+    letter-spacing: 0.2px;
+}
+
+/* =========================================================
+   Panel resize handle
+   ========================================================= */
+
+#panel-resizer {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    flex-shrink: 0;
+    z-index: 20;
+}

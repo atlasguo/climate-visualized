@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!-- =========================================================
+         Document metadata and global configuration
+         ========================================================= -->
+    <meta charset="utf-8" />
+    <title>Climate Visualized</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Application icon -->
+    <link rel="icon" href="assets/icon.png" type="image/png" />
+
+    <!-- Core visualization library -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <!-- Application stylesheets -->
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/chart.css" />
+</head>
+
+<body>
+    <!-- =========================================================
+         Root application container
+         ========================================================= -->
+    <div id="app">
+
+        <!-- =====================================================
+             Left information and chart panel
+             Displays climate metadata and linked charts
+             ===================================================== -->
+        <div id="panel-left" class="panel">
+            <div class="panel-header">
+                <div class="panel-title">Köppen Climate Classification</div>
+                <div class="panel-hint">Zoom/Pan/Hover to explore climate.</div>
+                <br>
+                <!-- Dynamic climate label and description -->
+                <div id="climate-type">—</div>
+                <div id="climate-explain"></div>
+            </div>
+
+            <!-- Monthly temperature chart -->
+            <svg id="tempChart"></svg>
+            <br>
+            <!-- Monthly precipitation chart -->
+            <svg id="precipChart"></svg>
+
+            <!-- Data source and authorship metadata -->
+            <div class="panel-metadata">
+                <div class="metadata-line">
+                    Data Source:
+                    <a href="https://www.nature.com/articles/sdata2018214" target="_blank" rel="noopener">
+                        Beck et al. (2018)
+                    </a>
+                </div>
+                <div class="metadata-line">
+                    Map by Atlas Guo (2026)<br>
+                    <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
+                        CartoGuophy.com
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- =====================================================
+             Main map viewport
+             Canvas for raster rendering, SVG for interaction layer
+             ===================================================== -->
+        <div id="map-wrapper">
+            <canvas id="mapCanvas"></canvas>
+            <svg id="overlay"></svg>
+        </div>
+
+        <!-- =====================================================
+             Loading overlay
+             Blocks interaction until data and rendering are ready
+             ===================================================== -->
+        <div id="loading-overlay">
+            <div class="spinner"></div>
+            <div class="loading-text">Loading map…</div>
+        </div>
+
+    </div>
+
+    <!-- =========================================================
+         Application logic
+         ========================================================= -->
+    <script src="js/map.js"></script>
+    <script src="js/chart.js"></script>
+</body>
+
+</html>

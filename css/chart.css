@@ -1,0 +1,133 @@
+/* =========================================================
+   Chart containers
+   Responsive SVG blocks within the side panel
+   ========================================================= */
+
+#tempChart,
+#precipChart {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 12px;
+}
+
+/* =========================================================
+   Chart typography
+   Consistent font rendering across SVG elements
+   ========================================================= */
+
+#tempChart,
+#precipChart,
+#tempChart text,
+#precipChart text {
+    font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Helvetica Neue",
+        Arial,
+        sans-serif;
+    font-weight: 400;
+}
+
+/* =========================================================
+   Axes styling
+   ========================================================= */
+
+.chart-axis path,
+.chart-axis line {
+    stroke: #bbbbbb;
+    stroke-width: 0.6;
+    shape-rendering: crispEdges;
+}
+
+.chart-axis text {
+    fill: #666666;
+    font-size: 12px;
+}
+
+/* =========================================================
+   Data marks
+   ========================================================= */
+
+.temp-line {
+    fill: none;
+    stroke-width: 2.0;
+}
+
+.precip-bar {
+    opacity: 0.75;
+}
+
+/* =========================================================
+   Panel header and titles
+   ========================================================= */
+
+.panel-header {
+    text-align: center;
+    margin-bottom: 12px;
+}
+
+.panel-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.panel-hint {
+    font-size: 11px;
+    color: #777777;
+    line-height: 1.2;
+}
+
+/* =========================================================
+   Climate label and description
+   ========================================================= */
+
+#climate-type {
+    font-size: 15px;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+#climate-explain {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #555555;
+    text-align: center;
+}
+
+#climate-explain .explain-line {
+    margin-top: 2px;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   Panel metadata and attribution
+   ========================================================= */
+
+.panel-metadata {
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px solid #dddddd;
+
+    font-size: 11px;
+    line-height: 1.35;
+    color: #777777;
+    text-align: center;
+}
+
+.panel-metadata .metadata-line {
+    margin-top: 4px;
+}
+
+.panel-metadata a {
+    color: #666666;
+    text-decoration: none;
+}
+
+.panel-metadata a:hover {
+    text-decoration: underline;
+}
