@@ -4,18 +4,20 @@
 <head>
     <!-- =========================================================
          Document metadata and global configuration
+         This page is the visualization entry; scripts are organized as modules (map/chart/shared).
          ========================================================= -->
     <meta charset="utf-8" />
     <title>Climate Visualized</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- Application icon -->
+    <!-- App icon -->
     <link rel="icon" href="assets/icon.png" type="image/png" />
 
     <!-- Core visualization library -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <!-- Application stylesheets -->
+    <link rel="stylesheet" href="css/theme.css" />
     <link rel="stylesheet" href="css/style.css" />
     <link rel="stylesheet" href="css/chart.css" />
 </head>
@@ -28,7 +30,7 @@
 
         <!-- =====================================================
              Left information and chart panel
-             Displays climate metadata and linked charts
+             Displays climate metadata and linked charts on hover
              ===================================================== -->
         <div id="panel-left" class="panel">
             <div class="panel-header">
@@ -47,12 +49,12 @@
             <!-- Monthly precipitation chart -->
             <svg id="precipChart"></svg>
 
-            <!-- lock reset button -->
+            <!-- Lock/reset button -->
             <button id="unlock-hover" style="display:none;">
                 Unlock
             </button>
 
-            <!-- Data source and authorship metadata -->
+            <!-- Data source and author information -->
             <div class="panel-metadata">
                 <div class="metadata-line">
                     Optimized for desktop and large-screen viewing.
@@ -103,9 +105,9 @@
 
     <!-- =========================================================
          Application logic
+         Entry point: load as ES module via js/main.js
          ========================================================= -->
-    <script src="js/map.js"></script>
-    <script src="js/chart.js"></script>
+    <script type="module" src="js/main.js"></script>
 </body>
 
 </html>

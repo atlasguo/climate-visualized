@@ -56,9 +56,12 @@ const precipChartSvg    = d3.select("#precipChart");
 
 const unlockBtn = document.getElementById("unlock-hover");
 
+// Import shared dispatcher
+import { dispatcher } from "./shared.js";
+
 /* =========================================================
    Explicit unlock control
-   Restores hover-driven panel updates
+   Click unlock to resume hover-driven panel updates
    ========================================================= */
 
 if (unlockBtn) {
@@ -66,6 +69,9 @@ if (unlockBtn) {
         PANEL_LOCKED = false;
         LOCKED_DATA = null;
         unlockBtn.style.display = "none";
+
+        // Notify other modules (map) to unlock and resume hover-driven updates
+        dispatcher.call("unlock", null);
     });
 }
 
@@ -88,9 +94,9 @@ const PRECIP_L_FACTOR_CHART   = 0.75;
 /* =========================================================
    Hover distance threshold
    Used to ignore distant or no-data regions
+   (handled by ./shared.js)
    ========================================================= */
 
-const HOVER_MAX_DIST2 = 0.25 * 0.25;
 
 /* =========================================================
    Responsive size helpers
@@ -142,6 +148,7 @@ function precipColor(baseColor) {
    Temperature chart renderer
    ========================================================= */
 
+// Render temperature line chart for the provided data; d is single-station data or null
 function renderTempChart(d) {
     if (!d) {
         tempChartSvg.selectAll("*").remove();
@@ -200,6 +207,7 @@ function renderTempChart(d) {
    Precipitation chart renderer
    ========================================================= */
 
+// Render precipitation bar chart for the provided data; d is single-station data or null
 function renderPrecipChart(d) {
     if (!d) {
         precipChartSvg.selectAll("*").remove();
@@ -259,31 +267,9 @@ function renderPrecipChart(d) {
    Hover and interaction logic
    ========================================================= */
 
-function screenToLonLat(x, y) {
-    const t = STATE.zoomTransform;
-    return STATE.projection.invert([
-        (x - t.x) / t.k,
-        (y - t.y) / t.k
-    ]);
-}
+// Nearest-point and screen->lonlat helpers are provided by ./shared.js
 
-function findNearest(lon, lat) {
-    let best = null;
-    let minDist = Infinity;
-
-    for (const d of STATE.data) {
-        const dx = d.lon - lon;
-        const dy = d.lat - lat;
-        const dist = dx * dx + dy * dy;
-        if (dist < minDist) {
-            minDist = dist;
-            best = d;
-        }
-    }
-
-    return minDist <= HOVER_MAX_DIST2 * 25 ? best : null;
-}
-
+// Update left info panel (labels + charts); d is current station data or null
 function updatePanel(d) {
     if (!d) {
         if (climateCoordLabel) climateCoordLabel.textContent = "";
@@ -317,28 +303,13 @@ function updatePanel(d) {
     renderPrecipChart(d);
 }
 
-function onMouseMove(e) {
-    if (!STATE.projection) return;
-    if (PANEL_LOCKED) return;
-
-    const rect = overlay.node().getBoundingClientRect();
-    const lonLat = screenToLonLat(
-        e.clientX - rect.left,
-        e.clientY - rect.top
-    );
-
-    updatePanel(lonLat ? findNearest(lonLat[0], lonLat[1]) : null);
-}
-
-function onMouseLeave() {
-    if (PANEL_LOCKED) return;
-    updatePanel(null);
-}
+// Hover handling moved to map.js; chart subscribes to events via dispatcher.
 
 /* =========================================================
    Köppen explanation formatter
    ========================================================= */
 
+// Split Köppen code and produce explanation lines
 function explainKgType(kg) {
     if (!kg || kg.length < 1) return "";
 
@@ -366,13 +337,10 @@ function explainKgType(kg) {
     return lines;
 }
 
-/* =========================================================
-   Click interaction
-   Clicking a valid glyph locks the panel
-   Clicking again releases the lock
-   ========================================================= */
-
-overlay.node().addEventListener("click", e => {
+// Click interaction handled by map.js via dispatcher; chart subscribes to implement lock/unlock
+// Subscribe to select events to implement panel lock/unlock
+dispatcher.on("select.chart", d => {
+    console.debug("[chart] select event -> PANEL_LOCKED=", PANEL_LOCKED, "d=", d);
     if (PANEL_LOCKED) {
         PANEL_LOCKED = false;
         LOCKED_DATA = null;
@@ -381,18 +349,12 @@ overlay.node().addEventListener("click", e => {
             unlockBtn.style.display = "none";
         }
 
+        // Notify other modules that the panel was unlocked
+        console.debug("[chart] dispatch unlock");
+        dispatcher.call("unlock", null);
         return;
     }
 
-    if (!STATE.projection) return;
-
-    const rect = overlay.node().getBoundingClientRect();
-    const lonLat = screenToLonLat(
-        e.clientX - rect.left,
-        e.clientY - rect.top
-    );
-
-    const d = lonLat ? findNearest(lonLat[0], lonLat[1]) : null;
     if (!d) return;
 
     PANEL_LOCKED = true;
@@ -402,6 +364,10 @@ overlay.node().addEventListener("click", e => {
         unlockBtn.style.display = "block";
     }
 
+    // Notify other modules that the panel was locked to a datum
+    console.debug("[chart] dispatch lock ->", LOCKED_DATA);
+    dispatcher.call("lock", null, LOCKED_DATA);
+
     updatePanel(d);
 });
 
@@ -409,6 +375,6 @@ overlay.node().addEventListener("click", e => {
    Event binding
    ========================================================= */
 
-const overlayNode = overlay.node();
-overlayNode.addEventListener("mousemove", onMouseMove);
-overlayNode.addEventListener("mouseleave", onMouseLeave);
+// Subscribe to hover events published by map.js
+dispatcher.on("hover.chart", d => { if (!PANEL_LOCKED) updatePanel(d); });
+dispatcher.on("hoverend.chart", () => { if (!PANEL_LOCKED) updatePanel(null); });

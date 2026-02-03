@@ -1,6 +1,8 @@
 /* =========================================================
    DOM references
    Canvas-based map rendering with SVG overlay for interaction
+   Responsibilities: construct projection, manage zoom/pan, render background/countries/graticules and glyphs, and dispatch interaction events (hover/select).
+   Note: does not render charts; events are dispatched via dispatcher.
    ========================================================= */
 
 const mapWrapper = document.getElementById("map-wrapper");
@@ -10,25 +12,23 @@ const overlay = d3.select("#overlay");
 const loadingOverlay = document.getElementById("loading-overlay");
 
 /* =========================================================
-   Global application state
+   Global application state (moved to shared module)
    ========================================================= */
 
-const STATE = {
-    width: 0,
-    height: 0,
-    data: [],
-    projection: null,
-    zoomTransform: d3.zoomIdentity,
-    mapBounds: null,
-    mapExtent: null,
-    symbolRadius: null
-};
+import { STATE, dispatcher, adjustColor, tempToR, precipToR, screenToLonLat, findNearest, buildQuadtree, findNearestScreen } from "./shared.js";
+import { loadData, loadCountries } from "./data.js";
 
 /* =========================================================
    Static reference layers
    ========================================================= */
 
 let COUNTRIES = null;
+
+// Currently hovered datum (used for visual highlight)
+let hoveredDatum = null;
+// When panel is locked, freeze highlight at the locked datum
+let isLocked = false;
+let lockedDatum = null;
 
 /* =========================================================
    Data range and geometry parameters
@@ -91,6 +91,7 @@ const referenceLatitudes = [
    Resize handling
    ========================================================= */
 
+// Handle container resize: update projection, symbol radius, bounds and redraw
 function resize() {
     STATE.width = mapWrapper.clientWidth;
     STATE.height = mapWrapper.clientHeight;
@@ -112,36 +113,17 @@ function resize() {
 window.addEventListener("resize", resize);
 
 /* =========================================================
-   Data loading
+   Data loading (moved to data.js)
    ========================================================= */
 
-async function loadData() {
-    STATE.data = await d3.csv("data/kg.csv", d => {
-        const t = [];
-        const p = [];
-        for (let i = 1; i <= 12; i++) {
-            t.push(+d[`t${String(i).padStart(2, "0")}`]);
-            p.push(+d[`p${String(i).padStart(2, "0")}`]);
-        }
-        return {
-            lon: +d.lon,
-            lat: +d.lat,
-            baseColor: d.kg_color1,
-            t,
-            p,
-            kg_type: d.kg_type
-        };
-    });
-}
+// Data loading is handled by ./data.js (loadData, loadCountries)
 
-async function loadCountries() {
-    COUNTRIES = await d3.json("data/countries.json");
-}
 
 /* =========================================================
    Map projection
    ========================================================= */
 
+// Compute and set projection to fit current data and canvas size
 function updateProjection() {
     STATE.projection = d3.geoEquirectangular()
         .fitExtent([[0, 0], [STATE.width, STATE.height]], {
@@ -161,6 +143,7 @@ function updateProjection() {
    Based on median nearest-neighbor distance
    ========================================================= */
 
+// Estimate base symbol radius from median nearest-neighbor distance
 function computeSymbolRadius() {
     const pts = STATE.data.map(d => STATE.projection([d.lon, d.lat]));
     const distances = [];
@@ -342,29 +325,14 @@ function drawGraticules() {
    Color and value helpers
    ========================================================= */
 
-function adjustColor(hex, satFactor, lightFactor) {
-    const hsl = d3.hsl(d3.color(hex));
-    hsl.s *= satFactor;
-    hsl.l *= lightFactor;
-    return hsl.formatHex();
-}
+// Helpers (adjustColor, tempToR, precipToR) are imported from ./shared.js
 
-function tempToR(t) {
-    return (t - TEMP_MIN) / (TEMP_MAX - TEMP_MIN);
-}
-
-function precipToR(p) {
-    const x = Math.min(PRECIP_MAX, Math.max(0, p)) / PRECIP_MAX;
-    const y = x < X1 ? Y1 / X1 * x
-        : x > X2 ? Y2 + (1 - Y2) / (1 - X2) * (x - X2)
-        : Y1 + (Y2 - Y1) / (X2 - X1) * (x - X1);
-    return R_MIN + (R_MAX - R_MIN) * y;
-}
 
 /* =========================================================
    Glyph rendering
    ========================================================= */
 
+// Draw a station's precipitation and temperature glyph at projected position (fill + outline + January line)
 function drawGlyph(d) {
     const [x0, y0] = STATE.projection([d.lon, d.lat]);
     const { x, y, k } = STATE.zoomTransform;
@@ -426,6 +394,7 @@ function drawGlyph(d) {
    Redraw, zoom, and initialization
    ========================================================= */
 
+// Lightweight redraw: base map is drawn on canvas; hover highlight is handled by SVG overlay to avoid full canvas redraws for hover only
 function redraw() {
     drawMapBackground();
     drawCountries();
@@ -433,6 +402,7 @@ function redraw() {
     STATE.data.forEach(drawGlyph);
 }
 
+// Attach zoom handlers. Keep interactive redraw during zoom, and rebuild quadtree when projection changes (on end we don't need to rebuild quadtree because quadtree is built in projection updates)
 overlay.call(
     d3.zoom()
         .scaleExtent([1, 30])
@@ -443,19 +413,135 @@ overlay.call(
         })
 );
 
-async function init() {
+// Hover and interaction handling: find nearest point and dispatch hover/select events via dispatcher
+// Convert screen coordinates to lon/lat, find nearest point, and dispatch events via dispatcher
+const overlayNode = overlay.node();
+
+// SVG highlight elements (cheap to update on hover)
+const hoverLayer = overlay.append('g').attr('class', 'hover-layer').style('pointer-events', 'none').style('display', 'none');
+const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
+
+// Track last mouse position (screen relative to overlay) so we can re-evaluate hover on unlock
+let lastMousePos = null;
+
+// Default hover circle styling
+hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 2).attr('opacity', 0.95);
+
+// Respect lock/unlock events from chart: freeze or resume hover highlight
+dispatcher.on('lock.map', d => {
+    console.debug('[map] received lock event ->', d);
+    isLocked = true;
+    lockedDatum = d || null;
+    hoveredDatum = lockedDatum;
+
+    if (lockedDatum && STATE.projection) {
+        const [x0, y0] = STATE.projection([lockedDatum.lon, lockedDatum.lat]);
+        const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+        const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+        const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
+        const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+        const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+
+        hoverLayer.style('display', null);
+        hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR)
+            .attr('stroke', adjustColor(lockedDatum.baseColor, 1.2, 0.6));
+    }
+    overlayNode.style.cursor = 'default';
+});
+
+dispatcher.on('unlock.map', () => {
+    console.debug('[map] received unlock event');
+    isLocked = false;
+    lockedDatum = null;
+    hoveredDatum = null;
+    hoverLayer.style('display', 'none');
+    overlayNode.style.cursor = 'default';
+});
+function onMouseMove(e) {
+    if (!STATE.projection) return;
+
+    // Compute and cache last mouse position (overlay-relative pixels)
+    const rect = overlay.node().getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    lastMousePos = { x: sx, y: sy };
+
+    // If panel is locked, keep highlight frozen
+    if (isLocked) return;
+
+    // Use screen-space quadtree for fast nearest lookup
+    const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
+    const nearest = findNearestScreen(sx, sy, pixelRadius);
+
+    // Only update state when hover target changes
+    if (nearest !== hoveredDatum) {
+        hoveredDatum = nearest;
+        if (nearest) {
+            dispatcher.call("hover", null, nearest);
+            // show svg highlight
+            const [x0, y0] = STATE.projection([nearest.lon, nearest.lat]);
+            const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+            const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+            const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
+            const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+            const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+
+            hoverLayer.style('display', null);
+            hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR)
+                .attr('stroke', adjustColor(nearest.baseColor, 1.2, 0.6));
+
+            overlayNode.style.cursor = 'pointer';
+        } else {
+            dispatcher.call("hoverend", null);
+            hoverLayer.style('display', 'none');
+            overlayNode.style.cursor = 'default';
+        }
+    }
+}
+
+function onMouseLeave() {
+    // If the panel is locked, keep the highlight visible when the cursor leaves the overlay
+    if (isLocked) return;
+
+    if (hoveredDatum !== null) {
+        hoveredDatum = null;
+        dispatcher.call("hoverend", null);
+        hoverLayer.style('display', 'none');
+        overlayNode.style.cursor = 'default';
+    }
+}
+
+overlayNode.addEventListener("mousemove", onMouseMove);
+overlayNode.addEventListener("mouseleave", onMouseLeave);
+overlayNode.addEventListener("click", e => {
+    if (!STATE.projection) return;
+
+    const rect = overlay.node().getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
+    const d = findNearestScreen(sx, sy, pixelRadius);
+
+    // Debug: log click and nearest datum
+    console.debug("[map] click -> nearest:", d);
+
+    dispatcher.call("select", null, d);
+});
+
+export async function init() {
     resize();
-    await Promise.all([
-        loadData(),
-        loadCountries()
-    ]);
+    STATE.data = await loadData();
+    COUNTRIES = await loadCountries();
     await new Promise(r => requestAnimationFrame(r));
     updateProjection();
     computeSymbolRadius();
     computeMapBounds();
     computeMapExtent();
+    // Build quadtree for fast screen-space queries
+    buildQuadtree();
     redraw();
-    loadingOverlay.style.display = "none";
-}
 
-init();
+    // data load complete
+    loadingOverlay.style.display = "none";
+    dispatcher.call("dataLoaded", null, STATE.data);
+}

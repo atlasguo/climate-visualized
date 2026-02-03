@@ -1,0 +1,42 @@
+/* theme.css
+   Theme and variables: centralize global CSS variables and utility classes for reuse and theming.
+*/
+:root {
+    /* Typography */
+    --font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+
+    /* Layout */
+    --panel-width: 20%;
+    --panel-z: 10;
+
+    /* Panel styling */
+    --panel-bg: #ffffffdd;
+    --panel-border: #dddddd;
+    --panel-shadow: 10px 0 16px rgba(0, 0, 0, 0.1);
+
+    /* Map / backdrop */
+    --map-bg: #eeeeee;
+
+    /* Loading overlay */
+    --loading-overlay-bg: rgba(0, 0, 0, 0.5);
+    --spinner-size: 48px;
+
+    /* Colors */
+    --panel-hint-color: #777777;
+    --axis-stroke: #bbbbbb;
+    --axis-text: #666666;
+    --climate-explain-color: #555555;
+    --metadata-color: #777777;
+    --link-color: #666666;
+    --climate-coord-color: #888888;
+
+    /* Controls */
+    --unlock-bg: #f6f6f6;
+    --unlock-border: #cccccc;
+    --unlock-hover-bg: #eeeeee;
+    --unlock-hover-border: #999999;
+}
+
+/* Small utilities */
+.vis-hidden { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

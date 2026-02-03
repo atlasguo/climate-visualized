@@ -1,6 +1,6 @@
 /* =========================================================
-   Chart containers
-   Responsive SVG blocks within the side panel
+   chart.css
+   Chart and panel styles: SVG charts, typography and control styling; uses variables from theme.css.
    ========================================================= */
 
 #tempChart,
@@ -13,42 +13,35 @@
 
 /* =========================================================
    Chart typography
-   Consistent font rendering across SVG elements
+   SVG text style consistency
    ========================================================= */
 
 #tempChart,
 #precipChart,
 #tempChart text,
 #precipChart text {
-    font-family:
-        "Inter",
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Helvetica Neue",
-        Arial,
-        sans-serif;
+    font-family: var(--font-family);
     font-weight: 400;
-}
+} 
 
 /* =========================================================
-   Axes styling
+   Axis styles
    ========================================================= */
 
 .chart-axis path,
 .chart-axis line {
-    stroke: #bbbbbb;
+    stroke: var(--axis-stroke);
     stroke-width: 0.6;
     shape-rendering: crispEdges;
 }
 
 .chart-axis text {
-    fill: #666666;
+    fill: var(--axis-text);
     font-size: 12px;
-}
+} 
 
 /* =========================================================
-   Data marks
+   Data markers
    ========================================================= */
 
 .temp-line {
@@ -77,7 +70,7 @@
 
 .panel-hint {
     font-size: 11px;
-    color: #777777;
+    color: var(--panel-hint-color);
     line-height: 1.2;
 }
 
@@ -96,9 +89,9 @@
     margin-top: 6px;
     font-size: 12px;
     line-height: 1.35;
-    color: #555555;
+    color: var(--climate-explain-color);
     text-align: center;
-}
+} 
 
 #climate-explain .explain-line {
     margin-top: 2px;
@@ -106,18 +99,23 @@
 }
 
 /* =========================================================
-   Panel metadata and attribution
+   Panel metadata and data source
    ========================================================= */
 
 .panel-metadata {
     margin-top: auto;
     padding-top: 10px;
-    border-top: 1px solid #dddddd;
+    border-top: 1px solid var(--panel-border);
 
     font-size: 11px;
     line-height: 1.35;
-    color: #777777;
+    color: var(--metadata-color);
     text-align: center;
+}
+
+.panel-metadata a {
+    color: var(--link-color);
+    text-decoration: none;
 }
 
 .panel-metadata .metadata-line {

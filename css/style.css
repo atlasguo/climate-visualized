@@ -1,18 +1,14 @@
+/* style.css
+   Layout styles: define main application layout, panels, and map container (works with theme.css).
+*/
 html, body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family:
-        "Inter",
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Helvetica Neue",
-        Arial,
-        sans-serif;
-}
+    font-family: var(--font-family);
+}  
 
 /* =========================================================
    Application layout
@@ -32,17 +28,17 @@ html, body {
    ========================================================= */
 
 .panel {
-    width: 20%;
+    width: var(--panel-width);
     height: 100%;
-    background: #ffffffdd;
+    background: var(--panel-bg);
     box-sizing: border-box;
     padding: 14px 12px;
     flex-shrink: 0;
-    z-index: 10;
-    box-shadow: 10px 0 16px rgba(0, 0, 0, 0.1);
+    z-index: var(--panel-z);
+    box-shadow: var(--panel-shadow);
     display: flex;
     flex-direction: column;
-}
+} 
 
 #panel-left {
     border-right: 1px solid #ddd;
@@ -69,13 +65,13 @@ html, body {
 
 /* =========================================================
    Loading overlay
-   Blocks interaction while application initializes
+   Blocks interaction during initialization
    ========================================================= */
 
 #loading-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--loading-overlay-bg);
     z-index: 1000;
 
     display: flex;
@@ -84,16 +80,16 @@ html, body {
     justify-content: center;
 
     pointer-events: all;
-}
+} 
 
 /* =========================================================
-   Loading spinner
-   Icon-based rotation for visual stability across GPUs
+   Loading icon
+   Rotating animation (GPU-friendly)
    ========================================================= */
 
 .spinner {
-    width: 48px;
-    height: 48px;
+    width: var(--spinner-size);
+    height: var(--spinner-size);
     margin-bottom: 14px;
 
     background-image: url("../assets/icon.png");
@@ -102,7 +98,7 @@ html, body {
     background-position: center;
 
     animation: spin 1.2s linear infinite;
-}
+} 
 
 @keyframes spin {
     to {
@@ -111,7 +107,7 @@ html, body {
 }
 
 /* =========================================================
-   Loading message
+   Loading text
    ========================================================= */
 
 .loading-text {
@@ -121,7 +117,7 @@ html, body {
 }
 
 /* =========================================================
-   Panel resize handle
+   Panel resizer handle
    ========================================================= */
 
 #panel-resizer {
