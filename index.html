@@ -33,9 +33,10 @@
         <div id="panel-left" class="panel">
             <div class="panel-header">
                 <div class="panel-title">Köppen Climate Classification</div>
-                <div class="panel-hint">Zoom/Pan/Hover to explore climate.</div>
+                <div class="panel-hint">Zoom and pan to explore climate patterns.<br>Click to lock or unlock the panel.
+                </div>
                 <br>
-                <!-- Dynamic climate label and description -->
+                <div id="climate-coord"></div>
                 <div id="climate-type">—</div>
                 <div id="climate-explain"></div>
             </div>
@@ -46,21 +47,38 @@
             <!-- Monthly precipitation chart -->
             <svg id="precipChart"></svg>
 
+            <!-- lock reset button -->
+            <button id="unlock-hover" style="display:none;">
+                Unlock
+            </button>
+
             <!-- Data source and authorship metadata -->
             <div class="panel-metadata">
+                <div class="metadata-line">
+                    Optimized for desktop and large-screen viewing.
+                </div>
+
+                <div class="metadata-line">
+                    May by Atlas Guo (2026) ·
+                    <a href="https://cartoguophy.com/maps/climate_visualized" target="_blank" rel="noopener">
+                        Learn more
+                    </a>
+                </div>
+
                 <div class="metadata-line">
                     Data Source:
                     <a href="https://www.nature.com/articles/sdata2018214" target="_blank" rel="noopener">
                         Beck et al. (2018)
                     </a>
                 </div>
+
                 <div class="metadata-line">
-                    Map by Atlas Guo (2026)<br>
                     <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
                         CartoGuophy.com
                     </a>
                 </div>
             </div>
+
         </div>
 
         <!-- =====================================================

@@ -87,8 +87,9 @@
 
 #climate-type {
     font-size: 15px;
-    font-weight: 500;
-    margin-bottom: 4px;
+    font-weight: 700;
+    margin-top: 10px;
+    margin-bottom: 3px;
 }
 
 #climate-explain {
@@ -130,4 +131,48 @@
 
 .panel-metadata a:hover {
     text-decoration: underline;
+}
+
+#climate-coord {
+    font-size: 11px;
+    line-height: 1.2;
+    color: #888888;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   Unlock hover button
+   ========================================================= */
+
+#unlock-hover {
+    appearance: none;
+
+    display: inline-block;
+    margin: 20px auto 10px auto;
+
+    border: 1px solid #cccccc;
+    background-color: #f6f6f6;
+
+    padding: 3px 10px;
+    min-width: 80px;
+
+    font-size: 13px;
+    line-height: 1.2;
+    color: #666;
+    text-align: center;
+
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#unlock-hover:hover {
+    background-color: #eeeeee;
+    border-color: #999999;
+}
+
+#unlock-hover:active {
+    background-color: #e2e2e2;
 }

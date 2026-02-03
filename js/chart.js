@@ -5,45 +5,69 @@
    ========================================================= */
 
 /* =========================================================
+   Panel interaction state
+   Controls whether the panel is driven by hover or locked
+   ========================================================= */
+
+let PANEL_LOCKED = false;
+let LOCKED_DATA = null;
+
+/* =========================================================
    Köppen classification dictionaries
    ========================================================= */
 
 const KOPPEN_MAIN = {
-    A: "equatorial",
-    B: "arid",
-    C: "warm temperate",
-    D: "snow",
-    E: "polar"
+    A: "Tropical",
+    B: "Arid",
+    C: "Temperate",
+    D: "Cold",
+    E: "Polar"
 };
 
 const KOPPEN_PRECIP = {
-    W: "desert",
-    S: "steppe",
-    f: "fully humid",
-    s: "summer dry",
-    w: "winter dry",
-    m: "monsoonal"
+    W: "Desert",
+    S: "Steppe",
+    f: "Without Dry Season",
+    s: "Dry Summer",
+    w: "Dry Winter",
+    m: "Monsoon"
 };
 
 const KOPPEN_TEMP = {
-    h: "hot arid",
-    k: "cold arid",
-    a: "hot summer",
-    b: "warm summer",
-    c: "cool summer",
-    d: "extremely continental",
-    F: "polar frost",
-    T: "polar tundra"
+    h: "Hot",
+    k: "Cold",
+    a: "Hot Summer",
+    b: "Warm Summer",
+    c: "Cold Summer",
+    d: "Very Cold Winter",
+    T: "Tundra",
+    F: "Frost"
 };
 
 /* =========================================================
    DOM references
    ========================================================= */
 
-const climateTypeLabel = document.getElementById("climate-type");
-const climateExplain   = document.getElementById("climate-explain");
-const tempChartSvg     = d3.select("#tempChart");
-const precipChartSvg   = d3.select("#precipChart");
+const climateCoordLabel = document.getElementById("climate-coord");
+const climateTypeLabel  = document.getElementById("climate-type");
+const climateExplain    = document.getElementById("climate-explain");
+const tempChartSvg      = d3.select("#tempChart");
+const precipChartSvg    = d3.select("#precipChart");
+
+const unlockBtn = document.getElementById("unlock-hover");
+
+/* =========================================================
+   Explicit unlock control
+   Restores hover-driven panel updates
+   ========================================================= */
+
+if (unlockBtn) {
+    unlockBtn.addEventListener("click", () => {
+        PANEL_LOCKED = false;
+        LOCKED_DATA = null;
+        unlockBtn.style.display = "none";
+    });
+}
 
 /* =========================================================
    Chart layout constants
@@ -54,7 +78,6 @@ const CHART_HEIGHT = 150;
 
 /* =========================================================
    Color scaling factors (chart-specific)
-   Adjust saturation and lightness relative to map colors
    ========================================================= */
 
 const TEMP_SAT_FACTOR_CHART   = 0.5;
@@ -64,10 +87,10 @@ const PRECIP_L_FACTOR_CHART   = 0.75;
 
 /* =========================================================
    Hover distance threshold
-   Filters out distant points over ocean or no-data regions
+   Used to ignore distant or no-data regions
    ========================================================= */
 
-const HOVER_MAX_DIST2 = 0.25 * 0.25; // degrees² (~25 km)
+const HOVER_MAX_DIST2 = 0.25 * 0.25;
 
 /* =========================================================
    Responsive size helpers
@@ -263,11 +286,23 @@ function findNearest(lon, lat) {
 
 function updatePanel(d) {
     if (!d) {
+        if (climateCoordLabel) climateCoordLabel.textContent = "";
         climateTypeLabel.textContent = "—";
         climateExplain.innerHTML = "";
         renderTempChart(null);
         renderPrecipChart(null);
         return;
+    }
+
+    if (climateCoordLabel) {
+        const latDir = d.lat >= 0 ? "N" : "S";
+        const lonDir = d.lon >= 0 ? "E" : "W";
+
+        const latVal = Math.abs(d.lat).toFixed(2);
+        const lonVal = Math.abs(d.lon).toFixed(2);
+
+        climateCoordLabel.textContent =
+            `${latVal}° ${latDir}, ${lonVal}° ${lonDir}`;
     }
 
     const kg = d.kg_type || "—";
@@ -284,6 +319,7 @@ function updatePanel(d) {
 
 function onMouseMove(e) {
     if (!STATE.projection) return;
+    if (PANEL_LOCKED) return;
 
     const rect = overlay.node().getBoundingClientRect();
     const lonLat = screenToLonLat(
@@ -295,6 +331,7 @@ function onMouseMove(e) {
 }
 
 function onMouseLeave() {
+    if (PANEL_LOCKED) return;
     updatePanel(null);
 }
 
@@ -328,6 +365,45 @@ function explainKgType(kg) {
 
     return lines;
 }
+
+/* =========================================================
+   Click interaction
+   Clicking a valid glyph locks the panel
+   Clicking again releases the lock
+   ========================================================= */
+
+overlay.node().addEventListener("click", e => {
+    if (PANEL_LOCKED) {
+        PANEL_LOCKED = false;
+        LOCKED_DATA = null;
+
+        if (unlockBtn) {
+            unlockBtn.style.display = "none";
+        }
+
+        return;
+    }
+
+    if (!STATE.projection) return;
+
+    const rect = overlay.node().getBoundingClientRect();
+    const lonLat = screenToLonLat(
+        e.clientX - rect.left,
+        e.clientY - rect.top
+    );
+
+    const d = lonLat ? findNearest(lonLat[0], lonLat[1]) : null;
+    if (!d) return;
+
+    PANEL_LOCKED = true;
+    LOCKED_DATA = d;
+
+    if (unlockBtn) {
+        unlockBtn.style.display = "block";
+    }
+
+    updatePanel(d);
+});
 
 /* =========================================================
    Event binding
