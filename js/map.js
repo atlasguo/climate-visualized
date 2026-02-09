@@ -276,9 +276,15 @@ function drawCountries() {
 
     ctx.beginPath();
     path(COUNTRIES);
+    
+    // Adjust stroke width based on zoom level
+    // At zoom 1: thin
+    // As zoom increases: thicker (reaches max at zoom 6)
+    const zoomFactor = Math.min(k, 6); // cap zoom effect at 6x
+    
     ctx.strokeStyle = "#2b2b2b";
-    ctx.lineWidth = 0.4 / k;
-    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = (0.15 + (zoomFactor - 1) / 5 * 1.5) / k; // ranges from 0.15 to 1.65, scaled by k
+    ctx.globalAlpha = 0.6;
     ctx.stroke();
 
     ctx.restore();

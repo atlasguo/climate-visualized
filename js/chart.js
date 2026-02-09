@@ -122,9 +122,9 @@ const CHART_HEIGHT = 300;
     Fixed chart scales for consistent comparison across stations.
     Temperature in °C and precipitation in mm.
 */
-const CHART_TEMP_MIN = -64; // °C
+const CHART_TEMP_MIN = -40; // °C
 const CHART_TEMP_MAX = 40;  // °C
-const CHART_PRECIP_MAX = 1600; // mm
+const CHART_PRECIP_MAX = 800; // mm
 
 /* =========================================================
    Color scaling factors (chart-specific)
@@ -227,7 +227,7 @@ function renderTempChart(d) {
 
     const line = d3.line()
         .x((_, i) => x(i + 1))
-        .y(v => y(v))
+        .y(v => Math.max(0, Math.min(innerHeight, y(v))))
         .curve(d3.curveMonotoneX);
 
     g.append("path")
@@ -243,7 +243,7 @@ function renderTempChart(d) {
         .append("circle")
         .attr("class", "temp-point")
         .attr("cx", (_, i) => x(i + 1))
-        .attr("cy", v => y(v))
+        .attr("cy", v => Math.max(0, Math.min(innerHeight, y(v))))
         .attr("r", 3)
         .attr("fill", tempColor(d.baseColor))
         .attr("stroke", "#ffffff")
@@ -252,11 +252,40 @@ function renderTempChart(d) {
         .on("mouseover", function(event, v) {
             const monthIndex = d.t.indexOf(v);
             d3.select(this).attr("r", 5);
-            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C`);
+            const belowMsg = v < CHART_TEMP_MIN ? " (below chart min)" : "";
+            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C${belowMsg}`);
         })
         .on("mouseout", function() {
             d3.select(this).attr("r", 3);
             hideTooltip();
+        });
+
+    // Add markers for values below chart min
+    g.selectAll(".temp-below-marker")
+        .data(d.t)
+        .enter()
+        .append("text")
+        .attr("class", "temp-below-marker")
+        .attr("x", (_, i) => x(i + 1))
+        .attr("y", v => v < CHART_TEMP_MIN ? innerHeight - 5 : null)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 18)
+        .attr("font-weight", "bold")
+        .attr("fill", "#555555")
+        .text(v => v < CHART_TEMP_MIN ? "▼" : "")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            if (v < CHART_TEMP_MIN) {
+                const monthIndex = d.t.indexOf(v);
+                d3.select(this).attr("font-size", 22);
+                showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C (below chart min)`);
+            }
+        })
+        .on("mouseout", function(event, v) {
+            if (v < CHART_TEMP_MIN) {
+                d3.select(this).attr("font-size", 18);
+                hideTooltip();
+            }
         });
 
     g.append("g")
@@ -313,19 +342,55 @@ function renderPrecipChart(d) {
         .append("rect")
         .attr("class", "precip-bar")
         .attr("x", (_, i) => x(i + 1))
-        .attr("y", v => y(v))
+        .attr("y", v => {
+            const py = y(v);
+            return Math.max(0, Math.min(innerHeight, py));
+        })
         .attr("width", x.bandwidth())
-        .attr("height", v => innerHeight - y(v))
+        .attr("height", v => {
+            const py = y(v);
+            const clampedY = Math.max(0, Math.min(innerHeight, py));
+            return Math.max(0, innerHeight - clampedY);
+        })
         .attr("fill", precipColor(d.baseColor))
         .style("cursor", "pointer")
         .on("mouseover", function(event, v) {
             const monthIndex = d.p.indexOf(v);
             d3.select(this).attr("opacity", 0.7);
-            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm`);
+            const exceedsMsg = v > CHART_PRECIP_MAX ? " (exceeds chart max)" : "";
+            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm${exceedsMsg}`);
         })
         .on("mouseout", function() {
             d3.select(this).attr("opacity", 1);
             hideTooltip();
+        });
+
+    // Add markers for values exceeding chart max
+    g.selectAll(".precip-exceed-marker")
+        .data(d.p)
+        .enter()
+        .append("text")
+        .attr("class", "precip-exceed-marker")
+        .attr("x", (_, i) => x(i + 1) + x.bandwidth() / 2)
+        .attr("y", v => v > CHART_PRECIP_MAX ? 18 : null)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 18)
+        .attr("font-weight", "bold")
+        .attr("fill", "#ffffff")
+        .text(v => v > CHART_PRECIP_MAX ? "▲" : "")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            if (v > CHART_PRECIP_MAX) {
+                const monthIndex = d.p.indexOf(v);
+                d3.select(this).attr("font-size", 22);
+                showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm (exceeds chart max)`);
+            }
+        })
+        .on("mouseout", function(event, v) {
+            if (v > CHART_PRECIP_MAX) {
+                d3.select(this).attr("font-size", 18);
+                hideTooltip();
+            }
         });
 
     g.append("g")
@@ -398,29 +463,23 @@ function explainKgType(kg) {
         lines.push(""); // empty line
     }
 
-    if (main === "E") {
-        // For E type: no precipitation line, show temperature
-        lines.push(""); // empty precipitation line
-        
-        const t = kg[1];
-        if (t && KOPPEN_TEMP[t]) {
-            lines.push(`Temperature: <strong>${t}</strong> ${KOPPEN_TEMP[t]}`);
-        } else {
-            lines.push(""); // empty temperature line
-        }
+    const tempChar = main === "E"
+        ? (kg.length >= 2 ? kg[1] : null)
+        : (kg.length >= 3 ? kg[2] : null);
+    const precipChar = main === "E"
+        ? null
+        : (kg.length >= 2 ? kg[1] : null);
+
+    if (tempChar && KOPPEN_TEMP[tempChar]) {
+        lines.push(`Temperature: <strong>${tempChar}</strong> ${KOPPEN_TEMP[tempChar]}`);
     } else {
-        // For other types: show precipitation and temperature
-        if (kg.length >= 2 && KOPPEN_PRECIP[kg[1]]) {
-            lines.push(`Precipitation: <strong>${kg[1]}</strong> ${KOPPEN_PRECIP[kg[1]]}`);
-        } else {
-            lines.push(""); // empty precipitation line
-        }
-        
-        if (kg.length >= 3 && KOPPEN_TEMP[kg[2]]) {
-            lines.push(`Temperature: <strong>${kg[2]}</strong> ${KOPPEN_TEMP[kg[2]]}`);
-        } else {
-            lines.push(""); // empty temperature line
-        }
+        lines.push("&nbsp;"); // keep empty temperature line height
+    }
+
+    if (precipChar && KOPPEN_PRECIP[precipChar]) {
+        lines.push(`Precipitation: <strong>${precipChar}</strong> ${KOPPEN_PRECIP[precipChar]}`);
+    } else {
+        lines.push("&nbsp;"); // keep empty precipitation line height
     }
 
     return lines;
