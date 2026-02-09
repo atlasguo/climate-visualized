@@ -400,6 +400,26 @@ function redraw() {
     drawCountries();
     drawGraticules();
     STATE.data.forEach(drawGlyph);
+    
+    // Update hover circle position after zoom/pan
+    updateHoverCircle();
+}
+
+// Update hover circle position based on current transform
+function updateHoverCircle() {
+    if (!STATE.projection) return;
+    
+    const datum = isLocked ? lockedDatum : hoveredDatum;
+    if (!datum) return;
+    
+    const [x0, y0] = STATE.projection([datum.lon, datum.lat]);
+    const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+    const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+    const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
+    const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+    const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+    
+    hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR * 0.75);
 }
 
 // Attach zoom handlers. Keep interactive redraw during zoom, and rebuild quadtree when projection changes (on end we don't need to rebuild quadtree because quadtree is built in projection updates)
@@ -425,7 +445,7 @@ const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none'
 let lastMousePos = null;
 
 // Default hover circle styling
-hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 2).attr('opacity', 0.95);
+hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 3).attr('opacity', 0.95);
 
 // Respect lock/unlock events from chart: freeze or resume hover highlight
 dispatcher.on('lock.map', d => {
@@ -443,8 +463,8 @@ dispatcher.on('lock.map', d => {
         const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
 
         hoverLayer.style('display', null);
-        hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR)
-            .attr('stroke', adjustColor(lockedDatum.baseColor, 1.2, 0.6));
+        hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
+            .attr('stroke', adjustColor(lockedDatum.baseColor, 1, 0.5));
     }
     overlayNode.style.cursor = 'default';
 });
@@ -487,8 +507,8 @@ function onMouseMove(e) {
             const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
 
             hoverLayer.style('display', null);
-            hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR)
-                .attr('stroke', adjustColor(nearest.baseColor, 1.2, 0.6));
+            hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
+                .attr('stroke', adjustColor(nearest.baseColor, 1, 0.5));
 
             overlayNode.style.cursor = 'pointer';
         } else {

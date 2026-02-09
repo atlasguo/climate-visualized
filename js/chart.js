@@ -13,6 +13,13 @@ let PANEL_LOCKED = false;
 let LOCKED_DATA = null;
 
 /* =========================================================
+   Month names
+   ========================================================= */
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/* =========================================================
    Köppen classification dictionaries
    ========================================================= */
 
@@ -60,6 +67,35 @@ const unlockBtn = document.getElementById("unlock-hover");
 import { dispatcher } from "./shared.js";
 
 /* =========================================================
+   Tooltip for chart hover
+   ========================================================= */
+
+const tooltip = d3.select("body")
+    .append("div")
+    .attr("class", "chart-tooltip")
+    .style("position", "absolute")
+    .style("visibility", "hidden")
+    .style("background-color", "rgba(0, 0, 0, 0.8)")
+    .style("color", "#ffffff")
+    .style("padding", "6px 10px")
+    .style("border-radius", "4px")
+    .style("font-size", "12px")
+    .style("pointer-events", "none")
+    .style("z-index", "10000");
+
+function showTooltip(event, text) {
+    tooltip
+        .style("visibility", "visible")
+        .text(text)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 20) + "px");
+}
+
+function hideTooltip() {
+    tooltip.style("visibility", "hidden");
+}
+
+/* =========================================================
    Explicit unlock control
    Click unlock to resume hover-driven panel updates
    ========================================================= */
@@ -80,7 +116,15 @@ if (unlockBtn) {
    ========================================================= */
 
 const MARGIN = { top: 35, right: 20, bottom: 20, left: 35 };
-const CHART_HEIGHT = 150;
+const CHART_HEIGHT = 300;
+
+/*
+    Fixed chart scales for consistent comparison across stations.
+    Temperature in °C and precipitation in mm.
+*/
+const CHART_TEMP_MIN = -64; // °C
+const CHART_TEMP_MAX = 40;  // °C
+const CHART_PRECIP_MAX = 1600; // mm
 
 /* =========================================================
    Color scaling factors (chart-specific)
@@ -178,8 +222,7 @@ function renderTempChart(d) {
         .range([0, innerWidth]);
 
     const y = d3.scaleLinear()
-        .domain(d3.extent(d.t))
-        .nice()
+        .domain([CHART_TEMP_MIN, CHART_TEMP_MAX])
         .range([innerHeight, 0]);
 
     const line = d3.line()
@@ -193,6 +236,29 @@ function renderTempChart(d) {
         .attr("stroke", tempColor(d.baseColor))
         .attr("d", line);
 
+    // Add data points
+    g.selectAll(".temp-point")
+        .data(d.t)
+        .enter()
+        .append("circle")
+        .attr("class", "temp-point")
+        .attr("cx", (_, i) => x(i + 1))
+        .attr("cy", v => y(v))
+        .attr("r", 3)
+        .attr("fill", tempColor(d.baseColor))
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 1.5)
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            const monthIndex = d.t.indexOf(v);
+            d3.select(this).attr("r", 5);
+            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C`);
+        })
+        .on("mouseout", function() {
+            d3.select(this).attr("r", 3);
+            hideTooltip();
+        });
+
     g.append("g")
         .attr("class", "chart-axis")
         .call(d3.axisLeft(y).ticks(4));
@@ -200,7 +266,7 @@ function renderTempChart(d) {
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
-        .call(d3.axisBottom(x).tickValues([1, 4, 7, 10]));
+        .call(d3.axisBottom(x).tickValues([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).tickFormat(i => MONTH_SHORT[i - 1]));
 }
 
 /* =========================================================
@@ -238,8 +304,7 @@ function renderPrecipChart(d) {
         .padding(0.18);
 
     const y = d3.scaleLinear()
-        .domain([0, d3.max(d.p)])
-        .nice()
+        .domain([0, CHART_PRECIP_MAX])
         .range([innerHeight, 0]);
 
     g.selectAll("rect")
@@ -251,7 +316,17 @@ function renderPrecipChart(d) {
         .attr("y", v => y(v))
         .attr("width", x.bandwidth())
         .attr("height", v => innerHeight - y(v))
-        .attr("fill", precipColor(d.baseColor));
+        .attr("fill", precipColor(d.baseColor))
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            const monthIndex = d.p.indexOf(v);
+            d3.select(this).attr("opacity", 0.7);
+            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm`);
+        })
+        .on("mouseout", function() {
+            d3.select(this).attr("opacity", 1);
+            hideTooltip();
+        });
 
     g.append("g")
         .attr("class", "chart-axis")
@@ -260,7 +335,7 @@ function renderPrecipChart(d) {
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
-        .call(d3.axisBottom(x).tickValues([1, 4, 7, 10]));
+        .call(d3.axisBottom(x).tickValues([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).tickFormat(i => MONTH_SHORT[i - 1]));
 }
 
 /* =========================================================
@@ -316,21 +391,35 @@ function explainKgType(kg) {
     const lines = [];
     const main = kg[0];
 
+    // Main line - always show if we have a main type
     if (KOPPEN_MAIN[main]) {
         lines.push(`Main: <strong>${main}</strong> ${KOPPEN_MAIN[main]}`);
+    } else {
+        lines.push(""); // empty line
     }
 
     if (main === "E") {
+        // For E type: no precipitation line, show temperature
+        lines.push(""); // empty precipitation line
+        
         const t = kg[1];
-        if (KOPPEN_TEMP[t]) {
+        if (t && KOPPEN_TEMP[t]) {
             lines.push(`Temperature: <strong>${t}</strong> ${KOPPEN_TEMP[t]}`);
+        } else {
+            lines.push(""); // empty temperature line
         }
     } else {
+        // For other types: show precipitation and temperature
         if (kg.length >= 2 && KOPPEN_PRECIP[kg[1]]) {
             lines.push(`Precipitation: <strong>${kg[1]}</strong> ${KOPPEN_PRECIP[kg[1]]}`);
+        } else {
+            lines.push(""); // empty precipitation line
         }
+        
         if (kg.length >= 3 && KOPPEN_TEMP[kg[2]]) {
             lines.push(`Temperature: <strong>${kg[2]}</strong> ${KOPPEN_TEMP[kg[2]]}`);
+        } else {
+            lines.push(""); // empty temperature line
         }
     }
 
