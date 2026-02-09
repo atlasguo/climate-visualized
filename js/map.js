@@ -313,16 +313,19 @@ function drawGraticules() {
     ctx.translate(x, y);
     ctx.scale(k, k);
 
+    // Adjust stroke width based on zoom level
+    const zoomFactor = Math.min(k, 6); // cap zoom effect at 6x
+
     ctx.beginPath();
     path(graticuleMinor());
     ctx.strokeStyle = "#e0e0e0";
-    ctx.lineWidth = 0.25 / k;
+    ctx.lineWidth = (0.25 + (zoomFactor - 1) / 5 * 0.5) / k; // ranges from 0.25 to 0.75
     ctx.stroke();
 
     ctx.beginPath();
     path(graticuleMajor());
     ctx.strokeStyle = "#c0c0c0";
-    ctx.lineWidth = 0.5 / k;
+    ctx.lineWidth = (0.5 + (zoomFactor - 1) / 5 * 1.0) / k; // ranges from 0.5 to 1.5
     ctx.stroke();
 
     ctx.restore();
@@ -337,6 +340,9 @@ function drawGeographicLines() {
     ctx.translate(x, y);
     ctx.scale(k, k);
 
+    // Adjust stroke width based on zoom level
+    const zoomFactor = Math.min(k, 6); // cap zoom effect at 6x
+
     referenceLatitudes.forEach(d => {
         const line = {
             type: "LineString",
@@ -346,7 +352,7 @@ function drawGeographicLines() {
         path(line);
         ctx.setLineDash(d.dashed ? [6 / k, 4 / k] : []);
         ctx.strokeStyle = "#999999";
-        ctx.lineWidth = 0.25 / k;
+        ctx.lineWidth = (0.25 + (zoomFactor - 1) / 5 * 0.5) / k; // ranges from 0.25 to 0.75
         ctx.stroke();
         ctx.setLineDash([]);
     });
