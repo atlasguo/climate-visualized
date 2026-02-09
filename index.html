@@ -88,6 +88,48 @@
              Canvas for raster rendering, SVG for interaction layer
              ===================================================== -->
         <div id="map-wrapper">
+            <!-- Search box -->
+            <div id="search-box" class="search-container">
+                <input type="text" id="search-input" class="search-input" placeholder="Search location..."
+                    autocomplete="off" />
+                <div id="search-suggestions" class="search-suggestions" style="display: none;"></div>
+            </div>
+
+            <!-- Map display toggles -->
+            <div class="map-toggles">
+                <label class="toggle-item">
+                    <input type="checkbox" id="toggle-borders" checked>
+                    <span>Countries</span>
+                </label>
+                <label class="toggle-item">
+                    <input type="checkbox" id="toggle-graticules" checked>
+                    <span>Graticules</span>
+                </label>
+                <label class="toggle-item">
+                    <input type="checkbox" id="toggle-geolines" checked>
+                    <span>Geographic Lines</span>
+                </label>
+            </div>
+
+            <!-- Zoom controls -->
+            <div class="zoom-controls">
+                <div class="zoom-group">
+                    <button id="zoom-in" class="zoom-btn zoom-in" title="Zoom in">+</button>
+                    <button id="zoom-out" class="zoom-btn zoom-out" title="Zoom out">−</button>
+                </div>
+                <button id="zoom-reset" class="zoom-btn zoom-reset" title="Reset to global view">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M2 12 h20"></path>
+                        <path d="M12 2 v20"></path>
+                        <ellipse cx="12" cy="12" rx="5" ry="10"></ellipse>
+                        <path d="M5 7 Q12 7, 19 7"></path>
+                        <path d="M5 17 Q12 17, 19 17"></path>
+                    </svg>
+                </button>
+            </div>
+
             <canvas id="mapCanvas"></canvas>
             <svg id="overlay"></svg>
         </div>

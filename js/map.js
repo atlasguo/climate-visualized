@@ -11,6 +11,15 @@ const ctx = canvas.getContext("2d");
 const overlay = d3.select("#overlay");
 const loadingOverlay = document.getElementById("loading-overlay");
 
+// Search box elements
+const searchInput = document.getElementById("search-input");
+const searchSuggestions = document.getElementById("search-suggestions");
+
+// Map display toggle elements
+const toggleBorders = document.getElementById("toggle-borders");
+const toggleGraticules = document.getElementById("toggle-graticules");
+const toggleGeoLines = document.getElementById("toggle-geolines");
+
 /* =========================================================
    Global application state (moved to shared module)
    ========================================================= */
@@ -23,6 +32,11 @@ import { loadData, loadCountries } from "./data.js";
    ========================================================= */
 
 let COUNTRIES = null;
+
+// Map display toggles
+let showBorders = true;
+let showGraticules = true;
+let showGeoLines = true;
 
 // Currently hovered datum (used for visual highlight)
 let hoveredDatum = null;
@@ -265,7 +279,7 @@ function drawMapBackground() {
 }
 
 function drawCountries() {
-    if (!COUNTRIES) return;
+    if (!COUNTRIES || !showBorders) return;
 
     const path = d3.geoPath(STATE.projection, ctx);
     const { x, y, k } = STATE.zoomTransform;
@@ -291,6 +305,7 @@ function drawCountries() {
 }
 
 function drawGraticules() {
+    if (!showGraticules) return;
     const path = d3.geoPath(STATE.projection, ctx);
     const { x, y, k } = STATE.zoomTransform;
 
@@ -309,6 +324,18 @@ function drawGraticules() {
     ctx.strokeStyle = "#c0c0c0";
     ctx.lineWidth = 0.5 / k;
     ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawGeographicLines() {
+    if (!showGeoLines) return;
+    const path = d3.geoPath(STATE.projection, ctx);
+    const { x, y, k } = STATE.zoomTransform;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(k, k);
 
     referenceLatitudes.forEach(d => {
         const line = {
@@ -405,10 +432,12 @@ function redraw() {
     drawMapBackground();
     drawCountries();
     drawGraticules();
+    drawGeographicLines();
     STATE.data.forEach(drawGlyph);
     
     // Update hover circle position after zoom/pan
     updateHoverCircle();
+    updateSearchMarker();
 }
 
 // Update hover circle position based on current transform
@@ -428,16 +457,116 @@ function updateHoverCircle() {
     hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR * 0.75);
 }
 
+function updateSearchMarker() {
+    if (!STATE.projection || !searchMarker || !searchPoint) return;
+
+    // searchPoint: the searched location (地名搜索结果)
+    const [sx0, sy0] = STATE.projection([searchPoint.lon, searchPoint.lat]);
+    const sx = sx0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+    const sy = sy0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+
+    // searchMarker: nearest climate data point (气候数据点，要躲避)
+    const [cx0, cy0] = STATE.projection([searchMarker.lon, searchMarker.lat]);
+    const cx = cx0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+    const cy = cy0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+
+    searchLayer.style('display', null);
+    
+    // Place symbol at search result point
+    searchMarkerRect
+        .attr('x', sx - 6)
+        .attr('y', sy - 6);
+    
+    // Clear existing tspan elements
+    searchMarkerLabel.selectAll('tspan').remove();
+    
+    // Split label by newlines and filter out empty lines
+    const lines = searchMarker.label.split('\n').filter(line => line.trim().length > 0);
+    
+    if (lines.length === 0) return;  // Safety check
+    
+    const symbolRadius = 6;  // symbol is 12x12, so radius is 6
+    const gap = 5;  // fixed gap between text block edge and search point symbol edge
+    const estimatedWidth = Math.max(...lines.map(line => line.length * 6.5));
+    const fontSize = 12;
+    const lineHeight = 1.2;
+    // Total text block height: first line height + (n-1) * line spacing
+    const totalTextHeight = fontSize + (lines.length - 1) * fontSize * lineHeight;
+    
+    // Determine label position: place near search point, avoid climate data point
+    // dx, dy: climate point relative to search point
+    const dx = cx - sx;
+    const dy = cy - sy;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    
+    let labelX, labelY, textAnchor, dominantBaseline;
+    
+    // Use 45° angle threshold to determine primary separation direction
+    if (absDx > absDy) {
+        // Climate point is primarily on left or right
+        // Place label horizontally with fixed gap from symbol edge
+        labelY = sy;
+        dominantBaseline = 'middle';
+        
+        if (dx > 0) {
+            // Climate point is to the right, place label to the left
+            labelX = sx - (symbolRadius + gap);
+            textAnchor = 'end';
+        } else {
+            // Climate point is to the left, place label to the right
+            labelX = sx + (symbolRadius + gap);
+            textAnchor = 'start';
+        }
+    } else {
+        // Climate point is primarily above or below
+        // Place label vertically with fixed gap from symbol edge
+        labelX = sx;  // center horizontally
+        textAnchor = 'middle';
+        
+        if (dy < 0) {
+            // Climate point is above, place label below
+            // First line top edge = search point bottom + gap
+            labelY = sy + symbolRadius + gap;
+            dominantBaseline = 'hanging';  // y position is at top of text
+        } else {
+            // Climate point is below, place label above
+            // Last line bottom edge = search point top - gap
+            // We need to account for all lines above it
+            labelY = sy - symbolRadius - gap - (lines.length - 1) * fontSize * lineHeight;
+            dominantBaseline = 'alphabetic';  // y position is at baseline
+        }
+    }
+    
+    searchMarkerLabel
+        .attr('x', labelX)
+        .attr('y', labelY)
+        .attr('text-anchor', textAnchor)
+        .attr('dominant-baseline', dominantBaseline);
+    
+    lines.forEach((line, i) => {
+        searchMarkerLabel.append('tspan')
+            .attr('x', labelX)
+            .attr('dy', i === 0 ? '0em' : '1.2em')
+            .text(line);
+    });
+}
+
 // Attach zoom handlers. Keep interactive redraw during zoom, and rebuild quadtree when projection changes (on end we don't need to rebuild quadtree because quadtree is built in projection updates)
-overlay.call(
-    d3.zoom()
-        .scaleExtent([1, 30])
-        .on("zoom", e => {
-            STATE.zoomTransform = e.transform;
+let zoomRaf = null;
+const zoomBehavior = d3.zoom()
+    .scaleExtent([1, 20])
+    .on("zoom", e => {
+        STATE.zoomTransform = e.transform;
+        if (zoomRaf) return;
+        zoomRaf = requestAnimationFrame(() => {
+            zoomRaf = null;
             constrainTransform();
             redraw();
-        })
-);
+        });
+    });
+
+overlay.call(zoomBehavior);
 
 // Hover and interaction handling: find nearest point and dispatch hover/select events via dispatcher
 // Convert screen coordinates to lon/lat, find nearest point, and dispatch events via dispatcher
@@ -447,11 +576,36 @@ const overlayNode = overlay.node();
 const hoverLayer = overlay.append('g').attr('class', 'hover-layer').style('pointer-events', 'none').style('display', 'none');
 const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
 
+// Search marker elements
+const searchLayer = overlay.append('g').attr('class', 'search-layer').style('pointer-events', 'none').style('display', 'none');
+const searchMarkerRect = searchLayer.append('rect')
+    .attr('width', 12)
+    .attr('height', 12)
+    .attr('rx', 3)
+    .attr('ry', 3)
+    .attr('fill', 'rgba(0, 0, 0, 0.75)')
+    .attr('stroke', 'rgba(255, 255, 255, 0.85)')
+    .attr('stroke-width', 2.5)
+    .attr('stroke-linejoin', 'round')
+    .attr('paint-order', 'stroke fill');
+const searchMarkerLabel = searchLayer.append('text')
+    .attr('font-size', 12)
+    .attr('font-weight', 600)
+    .attr('fill', 'rgba(0, 0, 0, 0.75)')
+    .attr('stroke', 'rgba(255, 255, 255, 0.85)')
+    .attr('stroke-width', 2.5)
+    .attr('stroke-linejoin', 'round')
+    .attr('paint-order', 'stroke fill')
+    .attr('dominant-baseline', 'middle');
+
 // Track last mouse position (screen relative to overlay) so we can re-evaluate hover on unlock
 let lastMousePos = null;
 
 // Default hover circle styling
 hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 3).attr('opacity', 0.95);
+
+let searchMarker = null;
+let searchPoint = null; // Store the search input location for relative positioning
 
 // Respect lock/unlock events from chart: freeze or resume hover highlight
 dispatcher.on('lock.map', d => {
@@ -481,6 +635,8 @@ dispatcher.on('unlock.map', () => {
     lockedDatum = null;
     hoveredDatum = null;
     hoverLayer.style('display', 'none');
+    searchMarker = null;
+    searchLayer.style('display', 'none');
     overlayNode.style.cursor = 'default';
 });
 function onMouseMove(e) {
@@ -553,6 +709,215 @@ overlayNode.addEventListener("click", e => {
 
     dispatcher.call("select", null, d);
 });
+
+/* =========================================================
+   Location search functionality
+   Uses Nominatim API for geocoding
+   ========================================================= */
+
+let searchTimeout;
+
+async function searchLocations(query) {
+    if (!query || query.length < 2) {
+        searchSuggestions.style.display = 'none';
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=8`
+        );
+        const results = await response.json();
+
+        if (results.length === 0) {
+            searchSuggestions.innerHTML = '<div class="search-suggestion-item" style="color: #999;">No results found</div>';
+            searchSuggestions.style.display = 'block';
+            return;
+        }
+
+        searchSuggestions.innerHTML = results
+            .map(result => `
+                <div class="search-suggestion-item" data-lat="${result.lat}" data-lon="${result.lon}">
+                    ${result.display_name || result.name}
+                </div>
+            `)
+            .join('');
+
+        searchSuggestions.style.display = 'block';
+
+        // Add click handlers to suggestions
+        document.querySelectorAll('.search-suggestion-item[data-lat]').forEach(item => {
+            item.addEventListener('click', () => {
+                const lat = parseFloat(item.dataset.lat);
+                const lon = parseFloat(item.dataset.lon);
+                const label = item.textContent.trim();
+                jumpToLocation(lat, lon, label);
+                searchInput.value = label;
+                searchSuggestions.style.display = 'none';
+            });
+        });
+    } catch (error) {
+        console.error('Search error:', error);
+        searchSuggestions.innerHTML = '<div class="search-suggestion-item" style="color: #999;">Search error</div>';
+        searchSuggestions.style.display = 'block';
+    }
+}
+
+function jumpToLocation(lat, lon, label) {
+    if (!STATE.projection) return;
+
+    // Store the search input location for label positioning
+    searchPoint = { lat, lon };
+
+    const targetZoom = 10;
+    const [x, y] = STATE.projection([lon, lat]);
+
+    // Calculate center of screen
+    const centerX = STATE.width / 2;
+    const centerY = STATE.height / 2;
+
+    // Calculate new transform to center the location at target zoom
+    const newX = centerX - x * targetZoom;
+    const newY = centerY - y * targetZoom;
+
+    const newTransform = d3.zoomIdentity.translate(newX, newY).scale(targetZoom);
+
+    const lockNearest = () => {
+        let nearest = null;
+        let minDist = Infinity;
+        for (const d of STATE.data) {
+            const dx = d.lon - lon;
+            const dy = d.lat - lat;
+            const dist = dx * dx + dy * dy;
+            if (dist < minDist) {
+                minDist = dist;
+                nearest = d;
+            }
+        }
+
+        if (isLocked) {
+            dispatcher.call("select", null, null);
+        }
+
+        if (nearest) {
+            dispatcher.call("select", null, nearest);
+            // Store nearest climate data point - use nearest's coordinates, not search point
+            searchMarker = { lat: nearest.lat, lon: nearest.lon, label: (label || 'Search result').replace(/,/g, '\n') };
+        } else {
+            // Fallback if no nearest point found
+            searchMarker = { lat, lon, label: (label || 'Search result').replace(/,/g, '\n') };
+        }
+        updateSearchMarker();
+    };
+
+    overlay.interrupt();
+    overlay
+        .transition()
+        .duration(900)
+        .ease(d3.easeCubicOut)
+        .call(zoomBehavior.transform, newTransform)
+        .on("end", lockNearest);
+}
+
+if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            searchLocations(e.target.value);
+        }, 300);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.search-container')) {
+            searchSuggestions.style.display = 'none';
+        }
+    });
+}
+
+// Zoom control buttons
+const zoomInBtn = document.getElementById('zoom-in');
+const zoomOutBtn = document.getElementById('zoom-out');
+const zoomResetBtn = document.getElementById('zoom-reset');
+
+if (zoomInBtn) {
+    zoomInBtn.addEventListener('click', () => {
+        const currentTransform = STATE.zoomTransform;
+        const newScale = Math.min(currentTransform.k * 1.5, 20); // max scale 20
+        
+        // Zoom towards center of viewport
+        const centerX = STATE.width / 2;
+        const centerY = STATE.height / 2;
+        
+        // Calculate the point in the original coordinate space
+        const x0 = (centerX - currentTransform.x) / currentTransform.k;
+        const y0 = (centerY - currentTransform.y) / currentTransform.k;
+        
+        // Calculate new transform to keep center point stable
+        const newTransform = d3.zoomIdentity
+            .translate(centerX - x0 * newScale, centerY - y0 * newScale)
+            .scale(newScale);
+        
+        overlay.transition()
+            .duration(300)
+            .call(zoomBehavior.transform, newTransform);
+    });
+}
+
+if (zoomOutBtn) {
+    zoomOutBtn.addEventListener('click', () => {
+        const currentTransform = STATE.zoomTransform;
+        const newScale = Math.max(currentTransform.k / 1.5, 1); // min scale 1
+        
+        // Zoom from center of viewport
+        const centerX = STATE.width / 2;
+        const centerY = STATE.height / 2;
+        
+        // Calculate the point in the original coordinate space
+        const x0 = (centerX - currentTransform.x) / currentTransform.k;
+        const y0 = (centerY - currentTransform.y) / currentTransform.k;
+        
+        // Calculate new transform to keep center point stable
+        const newTransform = d3.zoomIdentity
+            .translate(centerX - x0 * newScale, centerY - y0 * newScale)
+            .scale(newScale);
+        
+        overlay.transition()
+            .duration(300)
+            .call(zoomBehavior.transform, newTransform);
+    });
+}
+
+if (zoomResetBtn) {
+    zoomResetBtn.addEventListener('click', () => {
+        // Reset to initial view (scale 1, centered)
+        overlay.transition()
+            .duration(600)
+            .ease(d3.easeCubicOut)
+            .call(zoomBehavior.transform, d3.zoomIdentity);
+    });
+}
+
+// Map display toggle controls
+if (toggleBorders) {
+    toggleBorders.addEventListener('change', (e) => {
+        showBorders = e.target.checked;
+        redraw();
+    });
+}
+
+if (toggleGraticules) {
+    toggleGraticules.addEventListener('change', (e) => {
+        showGraticules = e.target.checked;
+        redraw();
+    });
+}
+
+if (toggleGeoLines) {
+    toggleGeoLines.addEventListener('change', (e) => {
+        showGeoLines = e.target.checked;
+        redraw();
+    });
+}
 
 export async function init() {
     resize();
