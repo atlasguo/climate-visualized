@@ -194,11 +194,6 @@ function precipColor(baseColor) {
 
 // Render temperature line chart for the provided data; d is single-station data or null
 function renderTempChart(d) {
-    if (!d) {
-        tempChartSvg.selectAll("*").remove();
-        return;
-    }
-
     const { innerWidth, innerHeight } = getChartSize();
     const g = baseSvg(tempChartSvg);
 
@@ -216,6 +211,27 @@ function renderTempChart(d) {
         .attr("font-size", 11)
         .attr("fill", "#777777")
         .text("Month (x) · Temperature (°C)");
+
+    if (!d) {
+        // Render empty axes when no data available
+        const x = d3.scaleLinear()
+            .domain([1, 12])
+            .range([0, innerWidth]);
+
+        const y = d3.scaleLinear()
+            .domain([CHART_TEMP_MIN, CHART_TEMP_MAX])
+            .range([innerHeight, 0]);
+
+        g.append("g")
+            .attr("class", "chart-axis")
+            .call(d3.axisLeft(y).ticks(4));
+
+        g.append("g")
+            .attr("class", "chart-axis")
+            .attr("transform", `translate(0,${innerHeight})`)
+            .call(d3.axisBottom(x).tickValues([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).tickFormat(i => MONTH_SHORT[i - 1]));
+        return;
+    }
 
     const x = d3.scaleLinear()
         .domain([1, 12])
@@ -304,11 +320,6 @@ function renderTempChart(d) {
 
 // Render precipitation bar chart for the provided data; d is single-station data or null
 function renderPrecipChart(d) {
-    if (!d) {
-        precipChartSvg.selectAll("*").remove();
-        return;
-    }
-
     const { innerWidth, innerHeight } = getChartSize();
     const g = baseSvg(precipChartSvg);
 
@@ -326,6 +337,29 @@ function renderPrecipChart(d) {
         .attr("font-size", 11)
         .attr("fill", "#777777")
         .text("Month (x) · Precipitation (mm)");
+
+    if (!d) {
+        // Render empty axes when no data available
+        const months = d3.range(1, 13);
+        const x = d3.scaleBand()
+            .domain(months)
+            .range([0, innerWidth])
+            .padding(0.18);
+
+        const y = d3.scaleLinear()
+            .domain([0, CHART_PRECIP_MAX])
+            .range([innerHeight, 0]);
+
+        g.append("g")
+            .attr("class", "chart-axis")
+            .call(d3.axisLeft(y).ticks(4));
+
+        g.append("g")
+            .attr("class", "chart-axis")
+            .attr("transform", `translate(0,${innerHeight})`)
+            .call(d3.axisBottom(x).tickFormat((_, i) => i < months.length ? MONTH_SHORT[months[i] - 1] : ""));
+        return;
+    }
 
     const x = d3.scaleBand()
         .domain(d3.range(1, 13))
@@ -412,9 +446,11 @@ function renderPrecipChart(d) {
 // Update left info panel (labels + charts); d is current station data or null
 function updatePanel(d) {
     if (!d) {
-        if (climateCoordLabel) climateCoordLabel.textContent = "";
-        climateTypeLabel.textContent = "—";
-        climateExplain.innerHTML = "";
+        if (climateCoordLabel) {
+            climateCoordLabel.innerHTML = "<div class=\"coord-line\"><br></div><div class=\"country-line\"><br></div>";
+        }
+        climateTypeLabel.textContent = "Hover or search a location";
+        climateExplain.innerHTML = `<div class="explain-line"><br></div><div class="explain-line"><br></div><div class="explain-line"><br></div>`;
         renderTempChart(null);
         renderPrecipChart(null);
         return;
@@ -427,8 +463,12 @@ function updatePanel(d) {
         const latVal = Math.abs(d.lat).toFixed(2);
         const lonVal = Math.abs(d.lon).toFixed(2);
 
-        climateCoordLabel.textContent =
-            `${latVal}° ${latDir}, ${lonVal}° ${lonDir}`;
+        const coordText = `${latVal}° ${latDir}, ${lonVal}° ${lonDir}`;
+        const countryText = d.countryName ? d.countryName : "<br>";
+        climateCoordLabel.innerHTML = `
+            <div class="coord-line">${coordText}</div>
+            <div class="country-line">${countryText}</div>
+        `;
     }
 
     const kg = d.kg_type || "—";
@@ -460,7 +500,7 @@ function explainKgType(kg) {
     if (KOPPEN_MAIN[main]) {
         lines.push(`Main: <strong>${main}</strong> ${KOPPEN_MAIN[main]}`);
     } else {
-        lines.push(""); // empty line
+        lines.push("<br>"); // empty line
     }
 
     const tempChar = main === "E"
@@ -473,13 +513,13 @@ function explainKgType(kg) {
     if (tempChar && KOPPEN_TEMP[tempChar]) {
         lines.push(`Temperature: <strong>${tempChar}</strong> ${KOPPEN_TEMP[tempChar]}`);
     } else {
-        lines.push("&nbsp;"); // keep empty temperature line height
+        lines.push("<br>"); // keep empty temperature line height
     }
 
     if (precipChar && KOPPEN_PRECIP[precipChar]) {
         lines.push(`Precipitation: <strong>${precipChar}</strong> ${KOPPEN_PRECIP[precipChar]}`);
     } else {
-        lines.push("&nbsp;"); // keep empty precipitation line height
+        lines.push("<br>"); // keep empty precipitation line height
     }
 
     return lines;
@@ -526,3 +566,6 @@ dispatcher.on("select.chart", d => {
 // Subscribe to hover events published by map.js
 dispatcher.on("hover.chart", d => { if (!PANEL_LOCKED) updatePanel(d); });
 dispatcher.on("hoverend.chart", () => { if (!PANEL_LOCKED) updatePanel(null); });
+
+// Initialize panel with empty state
+updatePanel(null);

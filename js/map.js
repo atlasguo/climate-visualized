@@ -44,6 +44,50 @@ let hoveredDatum = null;
 let isLocked = false;
 let lockedDatum = null;
 
+function getCountryNameForDatum(d) {
+    if (!d || d.countryName !== undefined || !COUNTRIES) return d ? (d.countryName || "") : "";
+    const pt = [d.lon, d.lat];
+
+    function polygonContainsWithHoles(rings, point) {
+        if (!rings || rings.length === 0) return false;
+        if (!d3.polygonContains(rings[0], point)) return false;
+        for (let i = 1; i < rings.length; i++) {
+            if (d3.polygonContains(rings[i], point)) return false;
+        }
+        return true;
+    }
+
+    function featureContainsPoint(feature, point) {
+        const geom = feature.geometry;
+        if (!geom) return false;
+        if (geom.type === "Polygon") {
+            return polygonContainsWithHoles(geom.coordinates, point);
+        }
+        if (geom.type === "MultiPolygon") {
+            return geom.coordinates.some(poly => polygonContainsWithHoles(poly, point));
+        }
+        return false;
+    }
+
+    for (const feature of COUNTRIES.features || []) {
+        if (!feature._bbox) {
+            feature._bbox = d3.geoBounds(feature);
+        }
+
+        const [[minLon, minLat], [maxLon, maxLat]] = feature._bbox;
+        if (pt[0] < minLon || pt[0] > maxLon || pt[1] < minLat || pt[1] > maxLat) {
+            continue;
+        }
+
+        if (featureContainsPoint(feature, pt)) {
+            d.countryName = feature.properties?.ADMIN || feature.properties?.NAME || "";
+            return d.countryName;
+        }
+    }
+    d.countryName = "";
+    return d.countryName;
+}
+
 /* =========================================================
    Data range and geometry parameters
    ========================================================= */
@@ -94,11 +138,11 @@ const graticuleMajor = d3.geoGraticule().step([30, 30]);
 const graticuleMinor = d3.geoGraticule().step([10, 10]);
 
 const referenceLatitudes = [
-    { lat:  66.5, dashed: true  },
-    { lat:  23.5, dashed: true  },
-    { lat:   0.0, dashed: false },
-    { lat: -23.5, dashed: true  },
-    { lat: -66.5, dashed: true  }
+    { lat:  66.5, dashed: true, name: "Arctic Circle" },
+    { lat:  23.5, dashed: true, name: "Tropic of Cancer" },
+    { lat:   0.0, dashed: false, name: "Equator" },
+    { lat: -23.5, dashed: true, name: "Tropic of Capricorn" },
+    { lat: -66.5, dashed: true, name: "Antarctic Circle" }
 ];
 
 /* =========================================================
@@ -434,12 +478,116 @@ function drawGlyph(d) {
    ========================================================= */
 
 // Lightweight redraw: base map is drawn on canvas; hover highlight is handled by SVG overlay to avoid full canvas redraws for hover only
+function drawAxisLabels() {
+    if (!STATE.projection) return;
+    
+    const { x, y, k } = STATE.zoomTransform;
+    const fontSize = 11;
+    const rightPadding = 8;
+    
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.font = `${fontSize}px Inter, system-ui`;
+    ctx.globalAlpha = 1;
+    
+    // Determine visible lon/lat range
+    const corners = [
+        [0, 0],
+        [STATE.width, 0],
+        [0, STATE.height],
+        [STATE.width, STATE.height]
+    ].map(([sx, sy]) => STATE.projection.invert([(sx - x) / k, (sy - y) / k]));
+    
+    let minLon = Infinity, maxLon = -Infinity;
+    let minLat = Infinity, maxLat = -Infinity;
+    corners.forEach(([lon, lat]) => {
+        minLon = Math.min(minLon, lon);
+        maxLon = Math.max(maxLon, lon);
+        minLat = Math.min(minLat, lat);
+        maxLat = Math.max(maxLat, lat);
+    });
+    
+    // Draw latitude labels on right edge
+    // Zoom level <= 3: every 30°, higher zooms: every 10°
+    const latLabels = new Map();
+
+    if (showGraticules) {
+        const latStep = k <= 3 ? 30 : 10;
+        for (let lat = Math.ceil(minLat / latStep) * latStep; lat <= maxLat; lat += latStep) {
+            const label = lat === 0 ? "0°" : (lat > 0 ? `${lat}°N` : `${-lat}°S`);
+            latLabels.set(lat, label);
+        }
+    }
+
+    if (showGeoLines) {
+        referenceLatitudes.forEach(d => {
+            if (d.lat >= minLat && d.lat <= maxLat) {
+                latLabels.set(d.lat, d.name);
+            }
+        });
+    }
+
+    if (latLabels.size > 0) {
+        Array.from(latLabels.keys()).sort((a, b) => a - b).forEach(lat => {
+            const [px, py] = STATE.projection([0, lat]);
+            const screenY = py * k + y;
+            if (screenY > 0 && screenY < STATE.height) {
+                const label = latLabels.get(lat);
+                ctx.textAlign = "right";
+                ctx.textBaseline = "middle";
+
+                // Draw white halo (stroke)
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+                ctx.lineWidth = 4;
+                ctx.lineJoin = "round";
+                ctx.strokeText(label, STATE.width - rightPadding, screenY);
+
+                // Draw text on top
+                ctx.fillStyle = "#666666";
+                ctx.fillText(label, STATE.width - rightPadding, screenY);
+            }
+        });
+    }
+    
+    // Draw longitude labels on bottom edge
+    if (showGraticules) {
+        // Zoom level <= 3: every 30°, higher zooms: every 10°
+        const lonStep = k <= 3 ? 30 : 10;
+        const lonLabels = new Set();
+        for (let lon = Math.ceil(minLon / lonStep) * lonStep; lon <= maxLon; lon += lonStep) {
+            if (lon >= -180 && lon <= 180) {
+                lonLabels.add(lon);
+            }
+        }
+
+        lonLabels.forEach(lon => {
+            const [px, py] = STATE.projection([lon, 0]);
+            const screenX = px * k + x;
+            if (screenX > 0 && screenX < STATE.width) {
+                const label = lon === 0 ? "0°" : (lon > 0 ? `${lon}°E` : `${-lon}°W`);
+                ctx.textAlign = "center";
+                ctx.textBaseline = "top";
+
+                // Draw white halo (stroke)
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+                ctx.lineWidth = 4;
+                ctx.lineJoin = "round";
+                ctx.strokeText(label, screenX, STATE.height - 16);
+
+                // Draw text on top
+                ctx.fillStyle = "#666666";
+                ctx.fillText(label, screenX, STATE.height - 16);
+            }
+        });
+    }
+}
+
 function redraw() {
     drawMapBackground();
     drawCountries();
     drawGraticules();
     drawGeographicLines();
     STATE.data.forEach(drawGlyph);
+    drawAxisLabels();
     
     // Update hover circle position after zoom/pan
     updateHoverCircle();
@@ -590,19 +738,18 @@ const searchMarkerRect = searchLayer.append('rect')
     .attr('rx', 3)
     .attr('ry', 3)
     .attr('fill', 'rgba(0, 0, 0, 0.75)')
-    .attr('stroke', 'rgba(255, 255, 255, 0.85)')
-    .attr('stroke-width', 2.5)
+    .attr('stroke', 'rgba(255, 255, 255, 0.9)')
+    .attr('stroke-width', 3)
     .attr('stroke-linejoin', 'round')
     .attr('paint-order', 'stroke fill');
 const searchMarkerLabel = searchLayer.append('text')
     .attr('font-size', 12)
     .attr('font-weight', 600)
     .attr('fill', 'rgba(0, 0, 0, 0.75)')
-    .attr('stroke', 'rgba(255, 255, 255, 0.85)')
-    .attr('stroke-width', 2.5)
+    .attr('stroke', 'rgba(255, 255, 255, 0.9)')
+    .attr('stroke-width', 3)
     .attr('stroke-linejoin', 'round')
-    .attr('paint-order', 'stroke fill')
-    .attr('dominant-baseline', 'middle');
+    .attr('paint-order', 'stroke fill');
 
 // Track last mouse position (screen relative to overlay) so we can re-evaluate hover on unlock
 let lastMousePos = null;
@@ -630,7 +777,7 @@ dispatcher.on('lock.map', d => {
 
         hoverLayer.style('display', null);
         hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
-            .attr('stroke', adjustColor(lockedDatum.baseColor, 1, 0.5));
+            .attr('stroke', adjustColor(lockedDatum.baseColor, 1, 0.4));
     }
     overlayNode.style.cursor = 'default';
 });
@@ -665,6 +812,7 @@ function onMouseMove(e) {
     if (nearest !== hoveredDatum) {
         hoveredDatum = nearest;
         if (nearest) {
+            getCountryNameForDatum(nearest);
             dispatcher.call("hover", null, nearest);
             // show svg highlight
             const [x0, y0] = STATE.projection([nearest.lon, nearest.lat]);
@@ -713,6 +861,9 @@ overlayNode.addEventListener("click", e => {
     // Debug: log click and nearest datum
     console.debug("[map] click -> nearest:", d);
 
+    if (d) {
+        getCountryNameForDatum(d);
+    }
     dispatcher.call("select", null, d);
 });
 
@@ -806,6 +957,7 @@ function jumpToLocation(lat, lon, label) {
         }
 
         if (nearest) {
+            getCountryNameForDatum(nearest);
             dispatcher.call("select", null, nearest);
             // Store nearest climate data point - use nearest's coordinates, not search point
             searchMarker = { lat: nearest.lat, lon: nearest.lon, label: (label || 'Search result').replace(/,/g, '\n') };
@@ -826,12 +978,31 @@ function jumpToLocation(lat, lon, label) {
 }
 
 if (searchInput) {
+    const searchClearBtn = document.getElementById('search-clear');
+    
     searchInput.addEventListener('input', (e) => {
+        // Show/hide clear button based on input value
+        if (searchClearBtn) {
+            searchClearBtn.style.display = e.target.value.trim() ? 'block' : 'none';
+        }
+        
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             searchLocations(e.target.value);
         }, 300);
     });
+    
+    // Clear search function
+    if (searchClearBtn) {
+        searchClearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            searchClearBtn.style.display = 'none';
+            searchSuggestions.style.display = 'none';
+            searchLayer.style('display', 'none');
+            searchPoint = null;
+            searchMarker = null;
+        });
+    }
 
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.search-container')) {

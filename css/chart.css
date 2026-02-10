@@ -93,6 +93,15 @@
     text-align: center;
 } 
 
+#climate-coord .coord-line,
+#climate-coord .country-line {
+    display: block;
+}
+
+#climate-coord .country-line {
+    margin-top: 4px;
+}
+
 #climate-explain .explain-line {
     margin-top: 2px;
     white-space: nowrap;
