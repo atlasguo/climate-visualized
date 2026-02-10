@@ -25,13 +25,14 @@ const toggleGeoLines = document.getElementById("toggle-geolines");
    ========================================================= */
 
 import { STATE, dispatcher, adjustColor, tempToR, precipToR, screenToLonLat, findNearest, buildQuadtree, findNearestScreen } from "./shared.js";
-import { loadData, loadCountries } from "./data.js";
+import { loadData, loadCountries, loadOcean } from "./data.js";
 
 /* =========================================================
    Static reference layers
    ========================================================= */
 
 let COUNTRIES = null;
+let OCEAN = null;
 
 // Map display toggles
 let showBorders = true;
@@ -310,7 +311,7 @@ function drawMapBackground() {
     const { x, y, k } = STATE.zoomTransform;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#eeeeee";
+    ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, STATE.width, STATE.height);
 
     ctx.fillStyle = "#ffffff";
@@ -320,6 +321,46 @@ function drawMapBackground() {
         (b.maxX - b.minX) * k,
         (b.maxY - b.minY) * k
     );
+}
+
+function drawOcean() {
+    if (!OCEAN) return;
+
+    const path = d3.geoPath(STATE.projection, ctx);
+    const { x, y, k } = STATE.zoomTransform;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(k, k);
+
+    // Set clipping region to ocean only
+    ctx.beginPath();
+    path(OCEAN);
+    ctx.clip("evenodd");
+
+    // Fill ocean base color (light blue)
+    ctx.beginPath();
+    path(OCEAN);
+    ctx.fillStyle = "#e2f4fc"; // 浅蓝色底色
+    ctx.fill("evenodd");
+
+    // Simple inner glow effect: very light blue fade from edge inward
+    const numLayers = 15;
+    for (let i = 0; i < numLayers; i++) {
+        const t = i / (numLayers - 1); // 0 (edge) to 1 (inner)
+        const width = 1 + t * 150; // 1px to 151px (edge to inner)
+        const alpha = 0.4 * (1 - t); // 0.4 at edge, 0 at inner
+        
+        ctx.beginPath();
+        path(OCEAN);
+        ctx.strokeStyle = `rgba(248, 252, 255, ${alpha})`; 
+        ctx.lineWidth = width / k;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+    }
+
+    ctx.restore();
 }
 
 function drawCountries() {
@@ -583,6 +624,7 @@ function drawAxisLabels() {
 
 function redraw() {
     drawMapBackground();
+    drawOcean();
     drawCountries();
     drawGraticules();
     drawGeographicLines();
@@ -1100,6 +1142,7 @@ export async function init() {
     resize();
     STATE.data = await loadData();
     COUNTRIES = await loadCountries();
+    OCEAN = await loadOcean();
     await new Promise(r => requestAnimationFrame(r));
     updateProjection();
     computeSymbolRadius();

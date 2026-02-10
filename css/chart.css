@@ -115,6 +115,7 @@
     margin-top: auto;
     padding-top: 10px;
     border-top: 1px solid var(--panel-border);
+    flex-shrink: 0;
 
     font-size: 11px;
     line-height: 1.35;

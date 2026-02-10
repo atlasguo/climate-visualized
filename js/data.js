@@ -28,3 +28,8 @@ export async function loadData() {
 export async function loadCountries() {
     return await d3.json("data/countries.json");
 }
+
+// Load ocean GeoJSON
+export async function loadOcean() {
+    return await d3.json("data/ocean.json");
+}
