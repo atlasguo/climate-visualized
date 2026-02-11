@@ -36,41 +36,96 @@
              Displays climate metadata and linked charts on hover
              ===================================================== -->
         <div id="panel-left" class="panel">
-            <div id="panel-body" class="panel-body">
-                <div class="panel-header">
+            <div class="panel-hint">Zoom/pan to explore climates. Click to lock/unlock.
+            </div> <br>
+            <div id="climate-coord"></div>
+            <br>
+            <div class="panel-tabs">
+                <button class="panel-tab active" data-target="overall">Overall</button>
+                <button class="panel-tab" data-target="temperature">Temperature</button>
+                <button class="panel-tab" data-target="precipitation">Precipitation</button>
+            </div>
+            <div class="tab-panels">
+                <div id="tab-overall" class="tab-panel active">
+                    <div id="panel-body" class="panel-body">
+                        <div class="panel-header">
 
-                    <div class="panel-hint">Zoom/pan to explore climate patterns. Click to lock/unlock.
+                            <div class="panel-title">Köppen Climate Classification</div>
+                            <div id="climate-type">—</div>
+                            <div id="climate-explain"></div>
+                        </div>
+
+                        <!-- Combined temperature and precipitation chart -->
+                        <svg id="climateComboChart"></svg>
+                        <div id="climate-stats" class="climate-stats"></div>
+
+                        <!-- Action buttons -->
+                        <div class="panel-action-row">
+                            <button id="panel-export-chart-btn" class="panel-export-btn" title="Export chart as image"
+                                disabled aria-disabled="true">
+                                Export Chart
+                            </button>
+                            <button id="panel-export-map-btn" class="panel-export-btn" title="Export map as image"
+                                disabled aria-disabled="true">
+                                Export Map
+                            </button>
+                            <button id="panel-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                                aria-disabled="true">
+                                Unlock
+                            </button>
+                        </div>
                     </div>
-                    <div class="panel-title">Köppen Climate Classification</div>
-                    <br>
-                    <div id="climate-coord"></div>
-                    <div id="climate-type">—</div>
-                    <div id="climate-explain"></div>
                 </div>
+                <div id="tab-temperature" class="tab-panel">
+                    <svg id="temperatureScatter" style="width:100%;height:392px;"></svg>
+                    <svg id="monthlyTemperature" style="width:100%;height:352px;"></svg>
 
-                <!-- Combined temperature and precipitation chart -->
-                <svg id="climateComboChart"></svg>
-                <div id="climate-stats" class="climate-stats"></div>
+                    <!-- Action buttons -->
+                    <div class="panel-action-row" id="temperature-action-row">
+                        <button id="temperature-export-chart-btn" class="panel-export-btn" title="Export chart as image"
+                            disabled aria-disabled="true">
+                            Export Chart
+                        </button>
+                        <button id="temperature-export-map-btn" class="panel-export-btn" title="Export map as image"
+                            disabled aria-disabled="true">
+                            Export Map
+                        </button>
+                        <button id="temperature-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                            aria-disabled="true">
+                            Unlock
+                        </button>
+                    </div>
+                </div>
+                <div id="tab-precipitation" class="tab-panel">
+                    <svg id="precipitationScatter" style="width:100%;height:392px;"></svg>
+                    <svg id="monthlyPrecipitation" style="width:100%;height:352px;"></svg>
 
-                <!-- Action buttons shown only when locked -->
-                <div class="panel-action-row">
-                    <button id="panel-export-btn" class="panel-export-btn" title="Export panel as image">
-                        Export as Image
-                    </button>
-                    <button id="panel-unlock-btn" class="panel-unlock-btn" title="Unlock panel">
-                        Unlock
-                    </button>
+                    <!-- Action buttons -->
+                    <div class="panel-action-row" id="precipitation-action-row">
+                        <button id="precipitation-export-chart-btn" class="panel-export-btn"
+                            title="Export chart as image" disabled aria-disabled="true">
+                            Export Chart
+                        </button>
+                        <button id="precipitation-export-map-btn" class="panel-export-btn" title="Export map as image"
+                            disabled aria-disabled="true">
+                            Export Map
+                        </button>
+                        <button id="precipitation-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                            aria-disabled="true">
+                            Unlock
+                        </button>
+                    </div>
                 </div>
             </div>
 
             <!-- Data source and author information -->
             <div class="panel-metadata">
                 <div class="metadata-line">
-                    Optimized for desktop (large-screen) viewing.
+                    Optimized for desktop viewing on large screens.
                 </div>
 
                 <div class="metadata-line">
-                    Cartography by Atlas Guo ·
+                    Cartography by Atlas Guo (2026） ·
                     <a href="https://cartoguophy.com/maps/climate_visualized" target="_blank" rel="noopener">
                         About this map
                     </a>
@@ -88,7 +143,7 @@
                 </div>
 
                 <div class="metadata-line">
-                    © 2026 <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
+                    © <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
                         CartoGuophy.com
                     </a>
                 </div>
@@ -155,8 +210,10 @@
              Blocks interaction until data and rendering are ready
              ===================================================== -->
         <div id="loading-overlay">
-            <div class="spinner"></div>
-            <div class="loading-text">Loading map…</div>
+            <div class="loading-box">
+                <div class="spinner"></div>
+                <div class="loading-text">Loading…</div>
+            </div>
         </div>
 
     </div>

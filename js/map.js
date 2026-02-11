@@ -9,7 +9,6 @@ const mapWrapper = document.getElementById("map-wrapper");
 const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const overlay = d3.select("#overlay");
-const loadingOverlay = document.getElementById("loading-overlay");
 const CANVAS_DPR = Math.max(window.devicePixelRatio || 1, 1);
 
 // Search box elements
@@ -27,6 +26,8 @@ const toggleGeoLines = document.getElementById("toggle-geolines");
 
 import { STATE, dispatcher, adjustColor, tempToR, precipToR, screenToLonLat, findNearest, buildQuadtree, findNearestScreen } from "./shared.js";
 import { loadData, loadCountries, loadOcean } from "./data.js";
+import { hideLoading } from "./loading.js";
+import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
 
 /* =========================================================
    Static reference layers
@@ -42,9 +43,6 @@ let showGeoLines = true;
 
 // Currently hovered datum (used for visual highlight)
 let hoveredDatum = null;
-// When panel is locked, freeze highlight at the locked datum
-let isLocked = false;
-let lockedDatum = null;
 
 function getCountryNameForDatum(d) {
     if (!d || d.countryName !== undefined || !COUNTRIES) return d ? (d.countryName || "") : "";
@@ -480,8 +478,9 @@ function drawGlyph(d) {
     ctx.translate(cx, cy);
 
     // Determine alpha for this glyph
+    const { locked, data: lockedData } = getLockState();
     let glyphAlpha = 1.0;
-    if (isLocked && lockedDatum && d.kg_type !== lockedDatum.kg_type) {
+    if (locked && lockedData && d.kg_type !== lockedData.kg_type) {
         glyphAlpha = 0.2;
     }
 
@@ -670,21 +669,63 @@ function redraw() {
     updateSearchMarker();
 }
 
+// Redraw map without axis labels for export
+function redrawMapForExport() {
+    drawMapBackground();
+    drawOcean();
+    drawCountries();
+    drawGraticules();
+    drawGeographicLines();
+    STATE.data.forEach(drawGlyph);
+    // Intentionally skip drawAxisLabels() for cleaner export
+    
+    // Update hover circle position after zoom/pan
+    updateHoverCircle();
+    updateSearchMarker();
+}
+
+// Export for use in export dialog
+window.redrawMapForExport = redrawMapForExport;
+// Allow restoring map layers after export
+window.redrawMap = redraw;
+
+// Helper: Calculate hover circle radius  
+function calcHoverRadius() {
+    const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
+    const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+    const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+    return { R_BASE, R_PRECIP, outerR };
+}
+
+// Helper: Project datum to screen coordinates
+function projectDatumToScreen(datum) {
+    if (!STATE.projection || !datum) return null;
+    const [x0, y0] = STATE.projection([datum.lon, datum.lat]);
+    return {
+        cx: x0 * STATE.zoomTransform.k + STATE.zoomTransform.x,
+        cy: y0 * STATE.zoomTransform.k + STATE.zoomTransform.y
+    };
+}
+
 // Update hover circle position based on current transform
 function updateHoverCircle() {
     if (!STATE.projection) return;
     
-    const datum = isLocked ? lockedDatum : hoveredDatum;
+    const { locked, data: lockedData } = getLockState();
+    const datum = locked ? lockedData : hoveredDatum;
     if (!datum) return;
     
-    const [x0, y0] = STATE.projection([datum.lon, datum.lat]);
-    const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
-    const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
-    const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
-    const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
-    const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+    const pos = projectDatumToScreen(datum);
+    if (!pos) return;
+    const { outerR } = calcHoverRadius();
     
-    hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR * 0.75);
+    hoverCircle
+        .interrupt()
+        .transition()
+        .duration(60)
+        .attr('cx', pos.cx)
+        .attr('cy', pos.cy)
+        .attr('r', outerR * 0.75);
 }
 
 function updateSearchMarker() {
@@ -804,7 +845,7 @@ const overlayNode = overlay.node();
 
 // SVG highlight elements (cheap to update on hover)
 const hoverLayer = overlay.append('g').attr('class', 'hover-layer').style('pointer-events', 'none').style('display', 'none');
-const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
+const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none').attr('stroke-width', 3);
 
 // Search marker elements
 const searchLayer = overlay.append('g').attr('class', 'search-layer').style('pointer-events', 'none').style('display', 'none');
@@ -839,32 +880,33 @@ let searchPoint = null; // Store the search input location for relative position
 // Respect lock/unlock events from chart: freeze or resume hover highlight
 dispatcher.on('lock.map', d => {
     console.debug('[map] received lock event ->', d);
-    isLocked = true;
-    lockedDatum = d || null;
-    hoveredDatum = lockedDatum;
+    setPanelLocked(true, d || null);
+    hoveredDatum = d || null;
 
-    if (lockedDatum && STATE.projection) {
-        const [x0, y0] = STATE.projection([lockedDatum.lon, lockedDatum.lat]);
-        const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
-        const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
-        const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
-        const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
-        const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+    if (d && STATE.projection) {
+        const pos = projectDatumToScreen(d);
+        const { outerR } = calcHoverRadius();
 
         hoverLayer.style('display', null);
-        hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
-            .attr('stroke', adjustColor(lockedDatum.baseColor, 1, 0.4));
+        hoverCircle
+            .interrupt()
+            .attr('cx', pos.cx)
+            .attr('cy', pos.cy)
+            .attr('r', outerR * 0.75)
+            .attr('stroke', adjustColor(d.baseColor, 1, 0.4));
     }
     // Set opacity for all points: same type 1, others 0.2
-    if (lockedDatum && window.d3 && d3.selectAll) {
-        d3.selectAll('.glyph').each(function(e) {
-            const el = d3.select(this);
-            if (e && e.kg_type === lockedDatum.kg_type) {
-                el.style('opacity', 1.0);
-            } else {
-                el.style('opacity', 0.2);
-            }
-        });
+    if (d && window.d3 && d3.selectAll) {
+        d3.selectAll('.glyph')
+            .interrupt()
+            .each(function(e) {
+                const el = d3.select(this);
+                if (e && e.kg_type === d.kg_type) {
+                    el.style('opacity', 1.0);
+                } else {
+                    el.style('opacity', 0.2);
+                }
+            });
     }
     overlayNode.style.cursor = 'default';
     // Force redraw to update glyph opacity
@@ -873,13 +915,23 @@ dispatcher.on('lock.map', d => {
 
 dispatcher.on('unlock.map', () => {
     console.debug('[map] received unlock event');
-    isLocked = false;
-    lockedDatum = null;
+    setPanelLocked(false, null);
     hoveredDatum = null;
+    
+    hoverCircle.interrupt();
     hoverLayer.style('display', 'none');
+    
     searchMarker = null;
     searchLayer.style('display', 'none');
     overlayNode.style.cursor = 'default';
+    
+    // Restore all glyphs opacity
+    if (window.d3 && d3.selectAll) {
+        d3.selectAll('.glyph')
+            .interrupt()
+            .style('opacity', 1.0);
+    }
+    
     // Force redraw to restore all glyphs
     if (typeof redraw === 'function') redraw();
 });
@@ -893,7 +945,8 @@ function onMouseMove(e) {
     lastMousePos = { x: sx, y: sy };
 
     // If panel is locked, keep highlight frozen
-    if (isLocked) return;
+    const { locked } = getLockState();
+    if (locked) return;
 
     // Use screen-space quadtree for fast nearest lookup
     const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
@@ -906,21 +959,30 @@ function onMouseMove(e) {
             getCountryNameForDatum(nearest);
             dispatcher.call("hover", null, nearest);
             // show svg highlight
-            const [x0, y0] = STATE.projection([nearest.lon, nearest.lat]);
-            const cx = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
-            const cy = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
-            const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
-            const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
-            const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+            const pos = projectDatumToScreen(nearest);
+            const { outerR } = calcHoverRadius();
 
             hoverLayer.style('display', null);
-            hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
+            hoverCircle
+                .interrupt()
+                .transition()
+                .duration(60)
+                .attr('cx', pos.cx)
+                .attr('cy', pos.cy)
+                .attr('r', outerR * 0.75)
                 .attr('stroke', adjustColor(nearest.baseColor, 1, 0.5));
 
             overlayNode.style.cursor = 'pointer';
         } else {
             dispatcher.call("hoverend", null);
-            hoverLayer.style('display', 'none');
+            hoverCircle
+                .interrupt()
+                .transition()
+                .duration(60)
+                .attr('r', 0)
+                .on('end', function() {
+                    hoverLayer.style('display', 'none');
+                });
             overlayNode.style.cursor = 'default';
         }
     }
@@ -928,35 +990,23 @@ function onMouseMove(e) {
 
 function onMouseLeave() {
     // If the panel is locked, keep the highlight visible when the cursor leaves the overlay
-    if (isLocked) return;
+    const { locked } = getLockState();
+    if (locked) return;
 
     if (hoveredDatum !== null) {
         hoveredDatum = null;
         dispatcher.call("hoverend", null);
-        hoverLayer.style('display', 'none');
+        hoverCircle
+            .interrupt()
+            .transition()
+            .duration(60)
+            .attr('r', 0)
+            .on('end', function() {
+                hoverLayer.style('display', 'none');
+            });
         overlayNode.style.cursor = 'default';
     }
 }
-
-overlayNode.addEventListener("mousemove", onMouseMove);
-overlayNode.addEventListener("mouseleave", onMouseLeave);
-overlayNode.addEventListener("click", e => {
-    if (!STATE.projection) return;
-
-    const rect = overlay.node().getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
-    const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
-    const d = findNearestScreen(sx, sy, pixelRadius);
-
-    // Debug: log click and nearest datum
-    console.debug("[map] click -> nearest:", d);
-
-    if (d) {
-        getCountryNameForDatum(d);
-    }
-    dispatcher.call("select", null, d);
-});
 
 /* =========================================================
    Location search functionality
@@ -1047,7 +1097,8 @@ function jumpToLocation(lat, lon, label) {
             }
         }
 
-        if (isLocked) {
+        const { locked } = getLockState();
+        if (locked) {
             dispatcher.call("select", null, null);
         }
 
@@ -1169,27 +1220,20 @@ if (zoomResetBtn) {
     });
 }
 
+// Helper: Setup toggle control that calls redraw on change
+function setupToggleControl(element, onToggle) {
+    if (element) {
+        element.addEventListener('change', (e) => {
+            onToggle(e.target.checked);
+            redraw();
+        });
+    }
+}
+
 // Map display toggle controls
-if (toggleBorders) {
-    toggleBorders.addEventListener('change', (e) => {
-        showBorders = e.target.checked;
-        redraw();
-    });
-}
-
-if (toggleGraticules) {
-    toggleGraticules.addEventListener('change', (e) => {
-        showGraticules = e.target.checked;
-        redraw();
-    });
-}
-
-if (toggleGeoLines) {
-    toggleGeoLines.addEventListener('change', (e) => {
-        showGeoLines = e.target.checked;
-        redraw();
-    });
-}
+setupToggleControl(toggleBorders, (checked) => { showBorders = checked; });
+setupToggleControl(toggleGraticules, (checked) => { showGraticules = checked; });
+setupToggleControl(toggleGeoLines, (checked) => { showGeoLines = checked; });
 
 export async function init() {
     resize();
@@ -1205,7 +1249,28 @@ export async function init() {
     buildQuadtree();
     redraw();
 
+    // Register event listeners after initialization
+    overlayNode.addEventListener("mousemove", onMouseMove);
+    overlayNode.addEventListener("mouseleave", onMouseLeave);
+    overlayNode.addEventListener("click", e => {
+        if (!STATE.projection) return;
+
+        const rect = overlay.node().getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
+        const d = findNearestScreen(sx, sy, pixelRadius);
+
+        // Debug: log click and nearest datum
+        console.debug("[map] click -> nearest:", d);
+
+        if (d) {
+            getCountryNameForDatum(d);
+        }
+        dispatcher.call("select", null, d);
+    });
+
     // data load complete
-    loadingOverlay.style.display = "none";
+    hideLoading();
     dispatcher.call("dataLoaded", null, STATE.data);
 }

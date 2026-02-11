@@ -14,7 +14,10 @@ export const STATE = {
     symbolRadius: null
 };
 
-export const dispatcher = d3.dispatch("hover", "hoverend", "select", "viewChanged", "dataLoaded", "lock", "unlock");
+export const dispatcher = d3.dispatch(
+    "hover", "hoverend", 
+    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged"
+);
 
 // Hover threshold (degrees^2) - preserved for backward compatibility
 export const HOVER_MAX_DIST2 = 0.25 * 0.25; // degrees^2 (~25 km)

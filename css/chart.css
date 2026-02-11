@@ -16,7 +16,7 @@
 .panel-export-btn,
 .panel-unlock-btn {
     margin-top: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 20px;
     padding: 6px 16px;
     font-size: 13px;
     font-weight: 600;
@@ -36,18 +36,29 @@
 .panel-unlock-btn:active {
     background: #2a5a8f;
 }
+
+.panel-export-btn:disabled,
+.panel-unlock-btn:disabled {
+    background: #c9d6e6;
+    color: #eef3f9;
+    cursor: not-allowed;
+    box-shadow: none;
+    opacity: 0.85;
+}
 /* =========================================================
    Panel action row (export/unlock)
    ========================================================= */
 .panel-action-row {
-    display: none;
+    display: flex;
     flex-direction: row;
     justify-content: center;
     align-items: flex-start;
-    margin-top: 6px;
+    margin-top: auto;
     margin-bottom: 0;
+    padding-top: 12px;
     gap: 8px;
     width: 100%;
+    flex-shrink: 0;
 }
 /* =========================================================
    chart.css
@@ -60,6 +71,15 @@
     width: 100%;
     height: auto;
     margin-top: 12px;
+    flex-shrink: 0;
+}
+
+/* Tab charts */
+#climateComboChart,
+#temperatureScatter,
+#monthlyTemperature,
+#precipitationScatter,
+#monthlyPrecipitation {
     flex-shrink: 0;
 }
 
@@ -99,10 +119,45 @@
 .temp-line {
     fill: none;
     stroke-width: 2.0;
+    stroke-linejoin: miter;
+    stroke-linecap: butt;
+}
+
+.precip-line {
+    stroke-linejoin: miter;
+    stroke-linecap: butt;
+}
+
+.temp-range,
+.precip-range {
+    shape-rendering: geometricPrecision;
 }
 
 .precip-bar {
     opacity: 0.75;
+}
+
+.chart-hover-dot {
+    stroke: #ffffff;
+    stroke-width: 1.2;
+    opacity: 0.9;
+}
+
+.chart-hover-line-outline {
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 4.0;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.9;
+}
+
+.chart-hover-line {
+    fill: none;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.9;
 }
 
 /* =========================================================
@@ -114,7 +169,7 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
     gap: 0;
 }
 
@@ -199,6 +254,7 @@
     font-size: 11px;
     color: var(--panel-hint-color);
     line-height: 1.2;
+    text-align: center;
 }
 
 /* =========================================================
@@ -269,13 +325,15 @@
 }
 
 #climate-coord {
-    font-size: 11px;
-    line-height: 1.2;
-    color: #888888;
+    font-size: 12px;
+    line-height: 1;
+    color: #5c5c5c;
     margin-bottom: 4px;
-    letter-spacing: 0.02em;
+    font-weight: 700;
+    letter-spacing: 0em;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    text-align: center;
 }
 
 .climate-stats {

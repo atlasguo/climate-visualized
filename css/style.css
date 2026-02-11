@@ -46,6 +46,55 @@ html, body {
 }
 
 /* =========================================================
+   Panel tabs (left panel tab navigation)
+   ========================================================= */
+.panel-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    margin-bottom: 10px;
+}
+
+.panel-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    padding: 10px 0 8px;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    color: #adadad;
+    letter-spacing: 0.0em;
+    transition: color 0.2s ease, border-bottom-color 0.2s ease;
+    border-bottom: 2px solid transparent;
+}
+
+.panel-tab.active {
+    color: #263138;
+    border-bottom-color: var(--accent-color, #4a90e2);
+}
+
+.tab-panels {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tab-panel {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.tab-panel.active {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+}
+
+/* =========================================================
    Map viewport
    Canvas for rendering, SVG for interaction overlay
    ========================================================= */
@@ -375,6 +424,18 @@ html, body {
     justify-content: center;
 
     pointer-events: all;
+}
+
+.loading-box {
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 12px;
+    padding: 32px 48px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
 } 
 
 /* =========================================================
@@ -407,8 +468,9 @@ html, body {
 
 .loading-text {
     font-size: 14px;
-    color: #444444;
+    color: #ffffff;
     letter-spacing: 0.2px;
+    font-weight: 500;
 }
 
 /* =========================================================
