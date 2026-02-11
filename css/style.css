@@ -38,6 +38,7 @@ html, body {
     box-shadow: var(--panel-shadow);
     display: flex;
     flex-direction: column;
+    min-height: 0;
 } 
 
 #panel-left {
@@ -54,6 +55,87 @@ html, body {
     flex: 1;
     height: 100%;
     overflow: hidden;
+}
+
+/* =========================================================
+   Lock hint toast
+   ========================================================= */
+
+.lock-toast {
+    position: fixed;
+    left: calc(50% + (var(--panel-width) / 2));
+    top: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+
+    background: rgba(255, 255, 255, 0.95);
+    color: #555555;
+    border: 1px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+    z-index: 1200;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 270px;
+    text-align: center;
+
+    transition: opacity 0.12s ease;
+}
+
+.lock-toast.show {
+    opacity: 1;
+}
+
+.lock-toast-btn {
+    padding: 7px 16px;
+    background: #4a90e2;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.lock-toast-btn:hover {
+    background: #357abd;
+}
+
+.lock-toast-btn:active {
+    background: #2a5a8f;
+}
+
+.lock-toast-checkbox-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.lock-toast-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #4a90e2;
+    margin: 0;
+    padding: 0;
+}
+
+.lock-toast-checkbox-label {
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+    margin: 0;
 }
 
 #mapCanvas,

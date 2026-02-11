@@ -10,6 +10,7 @@ const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const overlay = d3.select("#overlay");
 const loadingOverlay = document.getElementById("loading-overlay");
+const CANVAS_DPR = Math.max(window.devicePixelRatio || 1, 1);
 
 // Search box elements
 const searchInput = document.getElementById("search-input");
@@ -155,9 +156,12 @@ function resize() {
     STATE.width = mapWrapper.clientWidth;
     STATE.height = mapWrapper.clientHeight;
 
-    canvas.width = STATE.width;
-    canvas.height = STATE.height;
+    canvas.width = STATE.width * CANVAS_DPR;
+    canvas.height = STATE.height * CANVAS_DPR;
+    canvas.style.width = STATE.width + "px";
+    canvas.style.height = STATE.height + "px";
     overlay.attr("width", STATE.width).attr("height", STATE.height);
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
 
     if (STATE.projection) {
         updateProjection();
@@ -310,7 +314,7 @@ function drawMapBackground() {
     const b = STATE.mapExtent;
     const { x, y, k } = STATE.zoomTransform;
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, STATE.width, STATE.height);
 
@@ -345,7 +349,7 @@ function drawOcean() {
     ctx.fill("evenodd");
 
     // Simple inner glow effect: very light blue fade from edge inward
-    const numLayers = 15;
+    const numLayers = 10;
     for (let i = 0; i < numLayers; i++) {
         const t = i / (numLayers - 1); // 0 (edge) to 1 (inner)
         const width = 1 + t * 150; // 1px to 151px (edge to inner)
@@ -458,7 +462,10 @@ function drawGeographicLines() {
 
 // Draw a station's precipitation and temperature glyph at projected position (fill + outline + January line)
 function drawGlyph(d) {
-    const [x0, y0] = STATE.projection([d.lon, d.lat]);
+    // Clamp latitude and longitude to valid ranges
+    let lat = Math.max(-90, Math.min(90, d.lat));
+    let lon = Math.max(-180, Math.min(180, d.lon));
+    const [x0, y0] = STATE.projection([lon, lat]);
     const { x, y, k } = STATE.zoomTransform;
 
     const cx = x0 * k + x;
@@ -472,6 +479,13 @@ function drawGlyph(d) {
     ctx.save();
     ctx.translate(cx, cy);
 
+    // Determine alpha for this glyph
+    let glyphAlpha = 1.0;
+    if (isLocked && lockedDatum && d.kg_type !== lockedDatum.kg_type) {
+        glyphAlpha = 0.2;
+    }
+
+    // Precip ring
     ctx.beginPath();
     angles.forEach((a, i) => {
         const r = precipToR(d.p[i]) * R_PRECIP;
@@ -479,9 +493,10 @@ function drawGlyph(d) {
     });
     ctx.closePath();
     ctx.fillStyle = adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
-    ctx.globalAlpha = PRECIP_ALPHA;
+    ctx.globalAlpha = PRECIP_ALPHA * glyphAlpha;
     ctx.fill();
 
+    // Temp fill
     ctx.beginPath();
     angles.forEach((a, i) => {
         const r = tempToR(d.t[i]) * R_BASE;
@@ -489,9 +504,10 @@ function drawGlyph(d) {
     });
     ctx.closePath();
     ctx.fillStyle = adjustColor(d.baseColor, TEMP_FILL_SAT_FACTOR, TEMP_FILL_L_FACTOR);
-    ctx.globalAlpha = TEMP_FILL_ALPHA;
+    ctx.globalAlpha = TEMP_FILL_ALPHA * glyphAlpha;
     ctx.fill();
 
+    // Temp outline
     ctx.beginPath();
     angles.forEach((a, i) => {
         const r = tempToR(d.t[i]) * R_BASE;
@@ -499,16 +515,17 @@ function drawGlyph(d) {
     });
     ctx.closePath();
     ctx.strokeStyle = adjustColor(d.baseColor, TEMP_LINE_SAT_FACTOR, TEMP_LINE_L_FACTOR);
-    ctx.globalAlpha = TEMP_LINE_ALPHA;
+    ctx.globalAlpha = TEMP_LINE_ALPHA * glyphAlpha;
     ctx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
     ctx.stroke();
 
+    // Jan line
     const janR = tempToR(d.t[0]) * R_BASE;
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.lineTo(0, -janR);
     ctx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
-    ctx.globalAlpha = JAN_LINE_ALPHA;
+    ctx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
     ctx.stroke();
 
     ctx.restore();
@@ -519,25 +536,18 @@ function drawGlyph(d) {
    ========================================================= */
 
 // Lightweight redraw: base map is drawn on canvas; hover highlight is handled by SVG overlay to avoid full canvas redraws for hover only
-function drawAxisLabels() {
-    if (!STATE.projection) return;
-    
-    const { x, y, k } = STATE.zoomTransform;
-    const fontSize = 11;
-    const rightPadding = 8;
-    
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.font = `${fontSize}px Inter, system-ui`;
-    ctx.globalAlpha = 1;
-    
-    // Determine visible lon/lat range
+const LABEL_RIGHT_PADDING = 8;
+const LABEL_BOTTOM_OFFSET = 16;
+
+function buildAxisLabelSpecs(width, height, zoomTransform) {
+    const { x, y, k } = zoomTransform;
     const corners = [
         [0, 0],
-        [STATE.width, 0],
-        [0, STATE.height],
-        [STATE.width, STATE.height]
+        [width, 0],
+        [0, height],
+        [width, height]
     ].map(([sx, sy]) => STATE.projection.invert([(sx - x) / k, (sy - y) / k]));
-    
+
     let minLon = Infinity, maxLon = -Infinity;
     let minLat = Infinity, maxLat = -Infinity;
     corners.forEach(([lon, lat]) => {
@@ -546,80 +556,104 @@ function drawAxisLabels() {
         minLat = Math.min(minLat, lat);
         maxLat = Math.max(maxLat, lat);
     });
-    
-    // Draw latitude labels on right edge
-    // Zoom level <= 3: every 30°, higher zooms: every 10°
-    const latLabels = new Map();
 
+    const latSpecs = new Map();
     if (showGraticules) {
         const latStep = k <= 3 ? 30 : 10;
         for (let lat = Math.ceil(minLat / latStep) * latStep; lat <= maxLat; lat += latStep) {
+            if (lat < -90 || lat > 90) continue;
             const label = lat === 0 ? "0°" : (lat > 0 ? `${lat}°N` : `${-lat}°S`);
-            latLabels.set(lat, label);
+            latSpecs.set(lat, label);
         }
     }
-
     if (showGeoLines) {
         referenceLatitudes.forEach(d => {
-            if (d.lat >= minLat && d.lat <= maxLat) {
-                latLabels.set(d.lat, d.name);
+            if (d.lat >= minLat && d.lat <= maxLat && d.lat >= -90 && d.lat <= 90) {
+                latSpecs.set(d.lat, d.name);
             }
         });
     }
 
-    if (latLabels.size > 0) {
-        Array.from(latLabels.keys()).sort((a, b) => a - b).forEach(lat => {
-            const [px, py] = STATE.projection([0, lat]);
-            const screenY = py * k + y;
-            if (screenY > 0 && screenY < STATE.height) {
-                const label = latLabels.get(lat);
-                ctx.textAlign = "right";
-                ctx.textBaseline = "middle";
-
-                // Draw white halo (stroke)
-                ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-                ctx.lineWidth = 4;
-                ctx.lineJoin = "round";
-                ctx.strokeText(label, STATE.width - rightPadding, screenY);
-
-                // Draw text on top
-                ctx.fillStyle = "#666666";
-                ctx.fillText(label, STATE.width - rightPadding, screenY);
-            }
-        });
-    }
-    
-    // Draw longitude labels on bottom edge
-    if (showGraticules) {
-        // Zoom level <= 3: every 30°, higher zooms: every 10°
-        const lonStep = k <= 3 ? 30 : 10;
-        const lonLabels = new Set();
-        for (let lon = Math.ceil(minLon / lonStep) * lonStep; lon <= maxLon; lon += lonStep) {
-            if (lon >= -180 && lon <= 180) {
-                lonLabels.add(lon);
-            }
+    const latLabels = [];
+    Array.from(latSpecs.keys()).sort((a, b) => a - b).forEach(lat => {
+        const [px, py] = STATE.projection([0, lat]);
+        const screenY = py * k + y;
+        if (screenY > 0 && screenY < height) {
+            latLabels.push({
+                text: latSpecs.get(lat),
+                baseX: width - LABEL_RIGHT_PADDING,
+                baseY: screenY,
+                align: "right",
+                baseline: "middle"
+            });
         }
+    });
 
-        lonLabels.forEach(lon => {
+    const lonLabels = [];
+    if (showGraticules) {
+        const lonStep = k <= 3 ? 30 : 10;
+        const lonSet = new Set();
+        for (let lon = Math.ceil(minLon / lonStep) * lonStep; lon <= maxLon; lon += lonStep) {
+            if (lon < -180 || lon > 180) continue;
+            lonSet.add(lon);
+        }
+        lonSet.forEach(lon => {
+            if (lon < -180 || lon > 180) return;
             const [px, py] = STATE.projection([lon, 0]);
             const screenX = px * k + x;
-            if (screenX > 0 && screenX < STATE.width) {
-                const label = lon === 0 ? "0°" : (lon > 0 ? `${lon}°E` : `${-lon}°W`);
-                ctx.textAlign = "center";
-                ctx.textBaseline = "top";
-
-                // Draw white halo (stroke)
-                ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-                ctx.lineWidth = 4;
-                ctx.lineJoin = "round";
-                ctx.strokeText(label, screenX, STATE.height - 16);
-
-                // Draw text on top
-                ctx.fillStyle = "#666666";
-                ctx.fillText(label, screenX, STATE.height - 16);
+            if (screenX > 0 && screenX < width) {
+                lonLabels.push({
+                    text: lon === 0 ? "0°" : (lon > 0 ? `${lon}°E` : `${-lon}°W`),
+                    baseX: screenX,
+                    baseY: height - LABEL_BOTTOM_OFFSET,
+                    align: "center",
+                    baseline: "top"
+                });
             }
         });
     }
+
+    return { latLabels, lonLabels };
+}
+
+function renderAxisLabelSpecs(ctx, specs, fontSize, scale = 1) {
+    ctx.font = `${fontSize}px Inter, system-ui`;
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.fillStyle = "#666666";
+
+    const renderLine = (spec) => {
+        const x = spec.baseX * scale;
+        const y = spec.baseY * scale;
+        ctx.textAlign = spec.align;
+        ctx.textBaseline = spec.baseline;
+        ctx.strokeText(spec.text, x, y);
+        ctx.fillText(spec.text, x, y);
+    };
+
+    specs.latLabels.forEach(renderLine);
+    specs.lonLabels.forEach(renderLine);
+}
+
+function drawAxisLabels() {
+    if (!STATE.projection) return;
+    ctx.save();
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    const specs = buildAxisLabelSpecs(STATE.width, STATE.height, STATE.zoomTransform);
+    renderAxisLabelSpecs(ctx, specs, 11);
+    ctx.restore();
+}
+
+export function drawAxisLabelsForExport(targetCtx, overlayScale, fontSize = 26, showLabels = true) {
+    if (!STATE.projection || !showLabels) return;
+    if (!showLabels) return;
+    const specs = buildAxisLabelSpecs(STATE.width, STATE.height, STATE.zoomTransform);
+    targetCtx.save();
+    targetCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    renderAxisLabelSpecs(targetCtx, specs, fontSize, overlayScale);
+    targetCtx.restore();
 }
 
 function redraw() {
@@ -821,7 +855,20 @@ dispatcher.on('lock.map', d => {
         hoverCircle.attr('cx', cx).attr('cy', cy).attr('r', outerR*0.75)
             .attr('stroke', adjustColor(lockedDatum.baseColor, 1, 0.4));
     }
+    // Set opacity for all points: same type 1, others 0.2
+    if (lockedDatum && window.d3 && d3.selectAll) {
+        d3.selectAll('.glyph').each(function(e) {
+            const el = d3.select(this);
+            if (e && e.kg_type === lockedDatum.kg_type) {
+                el.style('opacity', 1.0);
+            } else {
+                el.style('opacity', 0.2);
+            }
+        });
+    }
     overlayNode.style.cursor = 'default';
+    // Force redraw to update glyph opacity
+    if (typeof redraw === 'function') redraw();
 });
 
 dispatcher.on('unlock.map', () => {
@@ -833,6 +880,8 @@ dispatcher.on('unlock.map', () => {
     searchMarker = null;
     searchLayer.style('display', 'none');
     overlayNode.style.cursor = 'default';
+    // Force redraw to restore all glyphs
+    if (typeof redraw === 'function') redraw();
 });
 function onMouseMove(e) {
     if (!STATE.projection) return;
@@ -964,6 +1013,10 @@ async function searchLocations(query) {
 
 function jumpToLocation(lat, lon, label) {
     if (!STATE.projection) return;
+
+    // Clamp latitude and longitude to valid ranges
+    lat = Math.max(-90, Math.min(90, lat));
+    lon = Math.max(-180, Math.min(180, lon));
 
     // Store the search input location for label positioning
     searchPoint = { lat, lon };

@@ -20,6 +20,9 @@
     <link rel="stylesheet" href="css/theme.css" />
     <link rel="stylesheet" href="css/style.css" />
     <link rel="stylesheet" href="css/chart.css" />
+
+    <!-- html2canvas for export -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 
 <body>
@@ -33,27 +36,32 @@
              Displays climate metadata and linked charts on hover
              ===================================================== -->
         <div id="panel-left" class="panel">
-            <div class="panel-header">
-                <div class="panel-title">Köppen Climate Classification</div>
-                <div class="panel-hint">Zoom and pan to explore climate patterns.<br>Click to lock or unlock the
-                    panel.
+            <div id="panel-body" class="panel-body">
+                <div class="panel-header">
+
+                    <div class="panel-hint">Zoom/pan to explore climate patterns. Click to lock/unlock.
+                    </div>
+                    <div class="panel-title">Köppen Climate Classification</div>
+                    <br>
+                    <div id="climate-coord"></div>
+                    <div id="climate-type">—</div>
+                    <div id="climate-explain"></div>
                 </div>
-                <br>
-                <div id="climate-coord"></div>
-                <div id="climate-type">—</div>
-                <div id="climate-explain"></div>
+
+                <!-- Combined temperature and precipitation chart -->
+                <svg id="climateComboChart"></svg>
+                <div id="climate-stats" class="climate-stats"></div>
+
+                <!-- Action buttons shown only when locked -->
+                <div class="panel-action-row">
+                    <button id="panel-export-btn" class="panel-export-btn" title="Export panel as image">
+                        Export as Image
+                    </button>
+                    <button id="panel-unlock-btn" class="panel-unlock-btn" title="Unlock panel">
+                        Unlock
+                    </button>
+                </div>
             </div>
-
-            <!-- Monthly temperature chart -->
-            <svg id="tempChart"></svg>
-            <br>
-            <!-- Monthly precipitation chart -->
-            <svg id="precipChart"></svg>
-
-            <!-- Lock/reset button -->
-            <button id="unlock-hover" style="display:none;">
-                Unlock
-            </button>
 
             <!-- Data source and author information -->
             <div class="panel-metadata">
