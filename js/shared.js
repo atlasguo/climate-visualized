@@ -16,7 +16,7 @@ export const STATE = {
 
 export const dispatcher = d3.dispatch(
     "hover", "hoverend", 
-    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged"
+    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged", "symbolStyleChanged"
 );
 
 // Hover threshold (degrees^2) - preserved for backward compatibility

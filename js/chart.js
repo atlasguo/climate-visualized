@@ -39,7 +39,7 @@ import {
 } from "./chart-tab-precipitation.js";
 
 // Import shared utilities
-import { dispatcher, getExportingState, setExportingState } from "./chart-common.js";
+import { dispatcher, getExportingState, setExportingState, updateCoordinateDisplay } from "./chart-common.js";
 import { showLoading, hideLoading } from "./loading.js";
 
 /* =========================================================
@@ -550,6 +550,7 @@ dispatcher.on("select.chart", d => {
 
     if (locked) {
         setPanelLocked(false, null);
+        updateCoordinateDisplay(null);
         dispatcher.call("unlock", null);
         return;
     }
@@ -557,6 +558,7 @@ dispatcher.on("select.chart", d => {
     if (!d) return;
 
     setPanelLocked(true, d);
+    updateCoordinateDisplay(d);
     dispatcher.call("lock", null, d);
     updatePanel(d, true);
 });

@@ -1,16 +1,17 @@
-// 页面初始显示坐标提示
-document.addEventListener("DOMContentLoaded", () => {
-    const climateCoordLabel = document.getElementById("climate-coord");
-    if (climateCoordLabel && climateCoordLabel.innerHTML.trim() === "") {
-        updateCoordinateDisplay(null);
-    }
-});
 /* =========================================================
    chart-common.js
    Shared constants, color helpers, and utility functions for all chart tabs
    ========================================================= */
 
 import { dispatcher, STATE, adjustColor } from "./shared.js";
+
+// Initialize coordinate display on page load
+document.addEventListener("DOMContentLoaded", () => {
+    const climateCoordLabel = document.getElementById("climate-coord");
+    if (climateCoordLabel && climateCoordLabel.innerHTML.trim() === "") {
+        updateCoordinateDisplay(null);
+    }
+});
 
 /* =========================================================
    Export State Management
@@ -83,9 +84,9 @@ export const PRECIP_L_FACTOR_CHART   = 0.75;
 /* =========================================================
     Tab2/Tab3 chart opacity (range + hull)
     ========================================================= */
-export const RANGE_OPACITY_UNLOCKED = 0.22;
-export const RANGE_OPACITY_LOCKED_ACTIVE = 0.48;
-export const RANGE_OPACITY_LOCKED_DIM = 0.05;
+export const RANGE_OPACITY_UNLOCKED = 0.14;
+export const RANGE_OPACITY_LOCKED_ACTIVE = 0.30;
+export const RANGE_OPACITY_LOCKED_DIM = 0.02;
 
 /* =========================================================
    Tooltip

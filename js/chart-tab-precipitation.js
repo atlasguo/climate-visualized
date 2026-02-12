@@ -54,6 +54,15 @@ function updatePrecipitationScatterHover(d) {
         .append("circle")
         .attr("class", "chart-hover-dot")
         .attr("r", 4)
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            if (v && typeof v.p_01 === "number" && typeof v.p_07 === "number") {
+                showTooltip(event, `Jan: ${v.p_01.toFixed(1)} mm, Jul: ${v.p_07.toFixed(1)} mm`);
+            }
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        })
         .merge(dots)
         .attr("cx", v => x(v.p_01))
         .attr("cy", v => y(v.p_07))
@@ -122,10 +131,46 @@ function updateMonthlyPrecipitationHover(d) {
     paths.enter()
         .append("path")
         .attr("class", "chart-hover-line")
+        .style("pointer-events", "stroke")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event) {
+            if (d && d.p) {
+                const precips = d.p.map((p, i) => `${MONTH_FULL[i]}: ${p.toFixed(1)} mm`).join(', ');
+                showTooltip(event, precips);
+            }
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        })
         .merge(paths)
         .attr("d", line)
         .attr("stroke", () => hoverCircleColor(d?.baseColor));
     paths.exit().remove();
+
+    // Add individual month markers for easier per-month hover
+    const monthPoints = data.length ? months : [];
+    const markers = layer.selectAll("circle.chart-hover-month-marker").data(monthPoints);
+    markers.enter()
+        .append("circle")
+        .attr("class", "chart-hover-month-marker")
+        .attr("r", 3)
+        .style("cursor", "pointer")
+        .style("pointer-events", "all")
+        .on("mouseover", function(event, m) {
+            d3.select(this).attr("r", 5);
+            showTooltip(event, `${MONTH_FULL[m.month - 1]}: ${m.precip.toFixed(1)} mm`);
+        })
+        .on("mouseout", function() {
+            d3.select(this).attr("r", 3);
+            hideTooltip();
+        })
+        .merge(markers)
+        .attr("cx", m => x(m.month))
+        .attr("cy", m => y(m.precip))
+        .attr("fill", () => hoverCircleColor(d?.baseColor))
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1);
+    markers.exit().remove();
 
     // Update opacity of ranges based on hover state
     const highlightType = d?.kg_type || null;
@@ -144,7 +189,7 @@ function updateMonthlyPrecipitationHover(d) {
    ========================================================= */
 export function handlePrecipitationTabHover(d) {
     const { locked } = getLockState();
-    if (locked) return;
+    // Allow hover updates even when locked to enable value reading
     hoverDatum = d || null;
     updateCoordinateDisplay(d);
     // Only update hover indicators, not full redraw
@@ -154,7 +199,12 @@ export function handlePrecipitationTabHover(d) {
 
 export function handlePrecipitationTabHoverEnd() {
     const { locked } = getLockState();
-    if (locked) return;
+    // Keep locked data visible when hover ends in locked state
+    if (locked) {
+        // Keep showing locked data, just hide tooltip
+        hideTooltip();
+        return;
+    }
     hoverDatum = null;
     updateCoordinateDisplay(null);
     // Only update hover indicators, not full redraw
@@ -175,6 +225,7 @@ export function drawMonthlyPrecipitation() {
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
+    // ...existing code...
 
     const margin = { top: 28, right: 20, bottom: 36, left: 44 };
     const innerWidth = width - margin.left - margin.right;
@@ -186,7 +237,7 @@ export function drawMonthlyPrecipitation() {
 
     if (!data.length) return;
 
-    // Get Y-axis extent for precipitation range (filter for positive values for log scale)
+    // Get Y-axis extent for precipitation range (linear scale)
     let allPrecip = [];
     (STATE.data || []).forEach(v => {
         for (let month = 1; month <= 12; month += 1) {
@@ -198,13 +249,12 @@ export function drawMonthlyPrecipitation() {
         }
     });
     
-    // Use extent or fallback if no data
-    let pMin = 0.1, pMax = 1000;
+    // Use linear scale with range [0, 1600]
+    let pMin = 0, pMax = 1600;
     if (allPrecip.length > 0) {
-        const extent = d3.extent(allPrecip);
-        // Ensure minimum is at least 0.1 for log scale
-        pMin = Math.max(0.1, extent[0]);
-        pMax = Math.max(1, extent[1]);
+        const max = d3.max(allPrecip);
+        // Cap at 1600 for consistent visualization
+        pMax = Math.min(1600, Math.max(1, max));
     }
 
     // Prepare monthly min/max range data for each climate type
@@ -236,22 +286,23 @@ export function drawMonthlyPrecipitation() {
         };
     });
 
-    // Scales with logarithmic Y-axis for precipitation
+    // Scales with piecewise linear Y-axis for precipitation - equal spacing for ticks
+    const precipitationTicks = [0, 25, 50, 100, 200, 400, 800, 1600];
     const x = d3.scaleLinear()
         .domain([0.5, 12.5])
         .range([0, innerWidth]);
-    const y = d3.scaleLog()
-        .domain([pMin, pMax])
-        .nice()
-        .range([innerHeight, 0])
-        .clamp(true);
+    // Create a piecewise linear scale where precipitation values are equally spaced
+    const tickRange = precipitationTicks.map((_, i) => innerHeight * (1 - i / (precipitationTicks.length - 1)));
+    const y = d3.scaleLinear()
+        .domain(precipitationTicks)
+        .range(tickRange);
 
     // Axes with log scale formatting
-    // 添加辅助网格线（横向）
+    // Add horizontal grid lines
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(y.ticks(4))
+        .data(precipitationTicks)
         .enter()
         .append("line")
         .attr("x1", 0)
@@ -262,7 +313,7 @@ export function drawMonthlyPrecipitation() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 添加辅助网格线（纵向）
+    // Add vertical grid lines
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
@@ -277,10 +328,10 @@ export function drawMonthlyPrecipitation() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 坐标轴
+    // Coordinate axes (for monthly chart) with equally-spaced precipitation ticks
     g.append("g")
         .attr("class", "chart-axis")
-        .call(d3.axisLeft(y).ticks(4, ".0f"));
+        .call(d3.axisLeft(y).tickValues(precipitationTicks).tickFormat(d => d));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
@@ -378,27 +429,29 @@ export function drawPrecipitationScatter() {
         return;
     }
 
-    // Get extent of both axes for logarithmic scale
+    // Get extent of both axes
     const xDomain = d3.extent(data, d => d._p01);
     const yDomain = d3.extent(data, d => d._p07);
     
-    // Logarithmic scales for both axes - ensure minimum is at least 0.1
-    const x = d3.scaleLog()
-        .domain([Math.max(0.1, xDomain[0]), Math.max(1, xDomain[1])])
-        .nice()
-        .range([0, innerWidth])
-        .clamp(true);
-    const y = d3.scaleLog()
-        .domain([Math.max(0.1, yDomain[0]), Math.max(1, yDomain[1])])
-        .nice()
-        .range([innerHeight, 0])
-        .clamp(true);
+    // Create piecewise linear scales where precipitation values are equally spaced
+    // X-axis: 0 to 800mm, Y-axis: 0 to 1600mm
+    const precipitationTicksX = [0, 25, 50, 100, 200, 400, 800];
+    const precipitationTicksY = [0, 25, 50, 100, 200, 400, 800, 1600];
+    const xTickRange = precipitationTicksX.map((_, i) => (i / (precipitationTicksX.length - 1)) * innerWidth);
+    const yTickRange = precipitationTicksY.map((_, i) => innerHeight * (1 - i / (precipitationTicksY.length - 1)));
+    
+    const x = d3.scaleLinear()
+        .domain(precipitationTicksX)
+        .range(xTickRange);
+    const y = d3.scaleLinear()
+        .domain(precipitationTicksY)
+        .range(yTickRange);
 
-    // 添加辅助网格线（横向）
+    // Add horizontal grid lines (for scatter plot)
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(y.ticks(4))
+        .data(precipitationTicksY)
         .enter()
         .append("line")
         .attr("x1", 0)
@@ -409,11 +462,11 @@ export function drawPrecipitationScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 添加辅助网格线（纵向）
+    // Add vertical grid lines
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(x.ticks ? x.ticks(4) : [])
+        .data(precipitationTicksX)
         .enter()
         .append("line")
         .attr("y1", 0)
@@ -424,14 +477,34 @@ export function drawPrecipitationScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 坐标轴
+    // Add y=x reference line
+    g.append("line")
+        .attr("class", "reference-line")
+        .attr("x1", x(0))
+        .attr("y1", y(0))
+        .attr("x2", x(800))
+        .attr("y2", y(800))
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,4")
+        .attr("opacity", 0.6)
+        .style("pointer-events", "stroke")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event) {
+            showTooltip(event, "y=x reference line");
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        });
+
+    // Coordinate axes (for scatter plot) with equally-spaced precipitation ticks
     g.append("g")
         .attr("class", "chart-axis")
-        .call(d3.axisLeft(y).ticks(4, ".0f"));
+        .call(d3.axisLeft(y).tickValues(precipitationTicksY).tickFormat(d => d));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
-        .call(d3.axisBottom(x).ticks(4, ".0f"));
+        .call(d3.axisBottom(x).tickValues(precipitationTicksX).tickFormat(d => d));
 
     // Title
     g.append("text")

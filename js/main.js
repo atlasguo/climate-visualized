@@ -42,7 +42,7 @@ function setupPanelTabs() {
             try {
                window.redrawComboChart?.();
             } catch (e) {
-               // silently fail if function doesn't exist
+               // Silently fail if function does not exist
             }
             // Hide loading after chart is redrawn
             hideLoading();
@@ -60,4 +60,22 @@ function setupPanelTabs() {
    });
 }
 
+// Initialize symbol style selector
+function setupSymbolSelector() {
+   const radioButtons = Array.from(document.querySelectorAll('input[name="symbol-style"]'));
+   if (!radioButtons.length) {
+      return;
+   }
+
+   // Event listener for radio button changes
+   radioButtons.forEach(radio => {
+      radio.addEventListener('change', () => {
+         const selectedStyle = document.querySelector('input[name="symbol-style"]:checked').value;
+         // Dispatch symbol style change event
+         dispatcher.call("symbolStyleChanged", null, selectedStyle);         
+      });
+   });
+}
+
 document.addEventListener('DOMContentLoaded', setupPanelTabs);
+document.addEventListener('DOMContentLoaded', setupSymbolSelector);

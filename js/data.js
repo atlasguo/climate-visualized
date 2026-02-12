@@ -3,7 +3,7 @@
    Purpose: provide reusable data APIs for map and charts.
 */
 
-// Load and parse climate CSV, return normalized station array (lon,lat,baseColor,t,p,kg_type,t_01-t_12,p_01-p_12)
+// Load and parse climate CSV, return normalized station array (lon,lat,baseColor,pointColor,t,p,kg_type,t_01-t_12,p_01-p_12)
 export async function loadData() {
     const data = await d3.csv("data/kg.csv", d => {
         const t = [];
@@ -12,6 +12,7 @@ export async function loadData() {
             lon: +d.lon,
             lat: +d.lat,
             baseColor: d.kg_color1,
+            pointColor: d.kg_color3,
             t,
             p,
             kg_type: d.kg_type

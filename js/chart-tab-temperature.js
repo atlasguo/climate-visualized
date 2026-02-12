@@ -54,6 +54,15 @@ function updateTemperatureScatterHover(d) {
         .append("circle")
         .attr("class", "chart-hover-dot")
         .attr("r", 4)
+        .style("cursor", "pointer")
+        .on("mouseover", function(event, v) {
+            if (v && typeof v.t_01 === "number" && typeof v.t_07 === "number") {
+                showTooltip(event, `Jan: ${v.t_01.toFixed(1)}°C, Jul: ${v.t_07.toFixed(1)}°C`);
+            }
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        })
         .merge(dots)
         .attr("cx", v => x(v.t_01))
         .attr("cy", v => y(v.t_07))
@@ -121,10 +130,46 @@ function updateMonthlyTemperatureHover(d) {
     paths.enter()
         .append("path")
         .attr("class", "chart-hover-line")
+        .style("pointer-events", "stroke")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event) {
+            if (d && d.t) {
+                const temps = d.t.map((t, i) => `${MONTH_FULL[i]}: ${t.toFixed(1)}°C`).join(', ');
+                showTooltip(event, temps);
+            }
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        })
         .merge(paths)
         .attr("d", line)
         .attr("stroke", () => hoverCircleColor(d?.baseColor));
     paths.exit().remove();
+
+    // Add individual month markers for easier per-month hover
+    const monthPoints = data.length ? months.filter(m => typeof m.temp === "number" && isFinite(m.temp)) : [];
+    const markers = layer.selectAll("circle.chart-hover-month-marker").data(monthPoints);
+    markers.enter()
+        .append("circle")
+        .attr("class", "chart-hover-month-marker")
+        .attr("r", 3)
+        .style("cursor", "pointer")
+        .style("pointer-events", "all")
+        .on("mouseover", function(event, m) {
+            d3.select(this).attr("r", 5);
+            showTooltip(event, `${MONTH_FULL[m.month - 1]}: ${m.temp.toFixed(1)}°C`);
+        })
+        .on("mouseout", function() {
+            d3.select(this).attr("r", 3);
+            hideTooltip();
+        })
+        .merge(markers)
+        .attr("cx", m => x(m.month))
+        .attr("cy", m => y(m.temp))
+        .attr("fill", () => hoverCircleColor(d?.baseColor))
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1);
+    markers.exit().remove();
 
     // Update opacity of ranges based on hover state
     const highlightType = d?.kg_type || null;
@@ -143,7 +188,7 @@ function updateMonthlyTemperatureHover(d) {
    ========================================================= */
 export function handleTemperatureTabHover(d) {
     const { locked } = getLockState();
-    if (locked) return;
+    // Allow hover updates even when locked to enable value reading
     hoverDatum = d || null;
     updateCoordinateDisplay(d);
     // Only update hover indicators, not full redraw
@@ -153,7 +198,12 @@ export function handleTemperatureTabHover(d) {
 
 export function handleTemperatureTabHoverEnd() {
     const { locked } = getLockState();
-    if (locked) return;
+    // Keep locked data visible when hover ends in locked state
+    if (locked) {
+        // Keep showing locked data, just hide tooltip
+        hideTooltip();
+        return;
+    }
     hoverDatum = null;
     updateCoordinateDisplay(null);
     // Only update hover indicators, not full redraw
@@ -174,6 +224,7 @@ export function drawMonthlyTemperature() {
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
+    // ...existing code...
 
     const margin = { top: 28, right: 20, bottom: 36, left: 44 };
     const innerWidth = width - margin.left - margin.right;
@@ -224,11 +275,12 @@ export function drawMonthlyTemperature() {
         .range([innerHeight, 0]);
 
     // Axes
-    // 添加辅助网格线（横向）
+    // Add horizontal grid lines
+    const tempTicksMonthly = d3.range(-70, 50, 10);
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(y.ticks(4))
+        .data(tempTicksMonthly)
         .enter()
         .append("line")
         .attr("x1", 0)
@@ -239,7 +291,7 @@ export function drawMonthlyTemperature() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 添加辅助网格线（纵向）
+    // Add vertical grid lines
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
@@ -254,10 +306,10 @@ export function drawMonthlyTemperature() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 坐标轴
+    // Coordinate axes (for monthly chart)
     g.append("g")
         .attr("class", "chart-axis")
-        .call(d3.axisLeft(y).ticks(4));
+        .call(d3.axisLeft(y).tickValues(tempTicksMonthly));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
@@ -364,11 +416,12 @@ export function drawTemperatureScatter() {
         .domain([yMin, yMax])
         .range([innerHeight, 0]);
 
-    // 添加辅助网格线（横向）
+    // Add horizontal grid lines (for scatter plot)
+    const tempTicksScatter = d3.range(-40, 50, 10);
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(y.ticks(4))
+        .data(tempTicksScatter)
         .enter()
         .append("line")
         .attr("x1", 0)
@@ -379,11 +432,12 @@ export function drawTemperatureScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 添加辅助网格线（纵向）
+    // Add vertical grid lines (for scatter plot)
+    const tempTicksX = d3.range(-70, 40, 10);
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(d3.range(xMin, xMax + 1, 20))
+        .data(tempTicksX)
         .enter()
         .append("line")
         .attr("y1", 0)
@@ -394,14 +448,34 @@ export function drawTemperatureScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // 坐标轴
+    // Add y=x reference line
+    g.append("line")
+        .attr("class", "reference-line")
+        .attr("x1", x(-40))
+        .attr("y1", y(-40))
+        .attr("x2", x(30))
+        .attr("y2", y(30))
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,4")
+        .attr("opacity", 0.6)
+        .style("pointer-events", "stroke")
+        .style("cursor", "pointer")
+        .on("mouseover", function(event) {
+            showTooltip(event, "y=x reference line");
+        })
+        .on("mouseout", function() {
+            hideTooltip();
+        });
+
+    // Coordinate axes (for scatter plot)
     g.append("g")
         .attr("class", "chart-axis")
-        .call(d3.axisLeft(y).ticks(4));
+        .call(d3.axisLeft(y).tickValues(tempTicksScatter));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)
-        .call(d3.axisBottom(x).ticks(5));
+        .call(d3.axisBottom(x).tickValues(tempTicksX));
 
     // Title
     g.append("text")

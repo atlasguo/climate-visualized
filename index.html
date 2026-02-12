@@ -36,10 +36,8 @@
              Displays climate metadata and linked charts on hover
              ===================================================== -->
         <div id="panel-left" class="panel">
-            <div class="panel-hint">Zoom/pan to explore climates. Click to lock/unlock.
-            </div> <br>
+            <div class="panel-hint">Zoom/pan to explore climates. Click to lock/unlock.</div>
             <div id="climate-coord"></div>
-            <br>
             <div class="panel-tabs">
                 <button class="panel-tab active" data-target="overall">Overall</button>
                 <button class="panel-tab" data-target="temperature">Temperature</button>
@@ -77,8 +75,12 @@
                     </div>
                 </div>
                 <div id="tab-temperature" class="tab-panel">
-                    <svg id="temperatureScatter" style="width:100%;height:392px;"></svg>
-                    <svg id="monthlyTemperature" style="width:100%;height:352px;"></svg>
+
+                    <div class="hemisphere-month-label">
+                        Northern Hemisphere: Month 1 = Jan;&nbsp&nbsp Southern Hemisphere: Month 1 = Jul
+                    </div>
+                    <svg id="temperatureScatter"></svg>
+                    <svg id="monthlyTemperature"></svg>
 
                     <!-- Action buttons -->
                     <div class="panel-action-row" id="temperature-action-row">
@@ -97,8 +99,12 @@
                     </div>
                 </div>
                 <div id="tab-precipitation" class="tab-panel">
-                    <svg id="precipitationScatter" style="width:100%;height:392px;"></svg>
-                    <svg id="monthlyPrecipitation" style="width:100%;height:352px;"></svg>
+
+                    <div class="hemisphere-month-label">
+                        Northern Hemisphere: Month 1 = Jan;&nbsp&nbsp Southern Hemisphere: Month 1 = Jul
+                    </div>
+                    <svg id="precipitationScatter"></svg>
+                    <svg id="monthlyPrecipitation"></svg>
 
                     <!-- Action buttons -->
                     <div class="panel-action-row" id="precipitation-action-row">
@@ -160,25 +166,52 @@
             <div id="search-box" class="search-container">
                 <input type="text" id="search-input" class="search-input" placeholder="Search location..."
                     autocomplete="off" />
-                <button id="search-clear" class="search-clear-btn" title="Clear search" style="display: none;">
+                <button id="search-clear" class="search-clear-btn" title="Clear search">
                     ✕
                 </button>
-                <div id="search-suggestions" class="search-suggestions" style="display: none;"></div>
+                <div id="search-suggestions" class="search-suggestions"></div>
+            </div>
+
+            <!-- Symbol style selector (top-right) -->
+            <div class="symbol-selector">
+                <div class="selector-label">Mode</div>
+                <div class="radio-group">
+                    <label class="radio-item">
+                        <input type="radio" name="symbol-style" value="point" id="symbol-point" checked>
+                        <div class="radio-content">
+                            <span class="radio-title">Point</span>
+                        </div>
+                    </label>
+                    <label class="radio-item">
+                        <input type="radio" name="symbol-style" value="glyph" id="symbol-glyph">
+                        <div class="radio-content">
+                            <span class="radio-title">Climate Glyph</span>
+                            <span class="radio-desc">
+                                - Outline: temperature<br>
+                                - Inner: precipitation<br>
+                                - January at top (clockwise)</span>
+                        </div>
+                    </label>
+                </div>
             </div>
 
             <!-- Map display toggles -->
             <div class="map-toggles">
                 <label class="toggle-item">
-                    <input type="checkbox" id="toggle-borders" checked>
-                    <span>Countries</span>
+                    <input type="checkbox" id="toggle-geolines" checked>
+                    <span>Geographic Line</span>
                 </label>
                 <label class="toggle-item">
                     <input type="checkbox" id="toggle-graticules" checked>
-                    <span>Graticules</span>
+                    <span>Graticule</span>
                 </label>
                 <label class="toggle-item">
-                    <input type="checkbox" id="toggle-geolines" checked>
-                    <span>Geographic Lines</span>
+                    <input type="checkbox" id="toggle-borders" checked>
+                    <span>Country</span>
+                </label>
+                <label class="toggle-item">
+                    <input type="checkbox" id="toggle-ocean" checked>
+                    <span>Ocean</span>
                 </label>
             </div>
 

@@ -510,13 +510,7 @@ function showHoverGuide(xPos, monthIndex, hoverLayer, fillColor, innerHeight) {
         .attr("y1", 0).attr("y2", innerHeight)
         .attr("stroke", "#999").attr("stroke-width", 1)
         .attr("stroke-dasharray", "4,4").attr("opacity", 0.5);
-    hoverLayer.append("text")
-        .attr("class", "hover-month-label")
-        .attr("x", xPos).attr("y", -8)
-        .attr("text-anchor", "middle")
-        .attr("font-size", 12).attr("font-weight", "bold")
-        .attr("fill", fillColor)
-        .text(MONTH_SHORT[monthIndex]);
+    // Removed month label above hover line per user request
 }
 
 // Helper: Clear hover guides
@@ -564,7 +558,7 @@ export function renderComboChart(d, withAnimation = false) {
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
-        .data(yTemp.ticks(4))
+        .data(yTemp.ticks(8))
         .enter()
         .append("line")
         .attr("x1", 0)
@@ -592,11 +586,11 @@ export function renderComboChart(d, withAnimation = false) {
     // Axes
     g.append("g")
         .attr("class", "chart-axis")
-        .call(d3.axisLeft(yTemp).ticks(4));
+        .call(d3.axisLeft(yTemp).ticks(8));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(${innerWidth},0)`)
-        .call(d3.axisRight(yPrecip).ticks(4));
+        .call(d3.axisRight(yPrecip).ticks(8));
     g.append("g")
         .attr("class", "chart-axis")
         .attr("transform", `translate(0,${innerHeight})`)

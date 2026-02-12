@@ -7,7 +7,7 @@ Rendered on HTML Canvas with an SVG overlay for interaction (D3). Climate glyphs
 ## Data
 
 - Köppen–Geiger climate classification (Beck et al., 2018)
-- Country boundaries (Natural Earth 1:50m)
+- Country boundaries and ocean (Natural Earth 1:50m)
 
 ## Author
 

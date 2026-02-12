@@ -14,9 +14,9 @@
 }
 /* Unified style for export and unlock buttons */
 .panel-export-btn,
-.panel-unlock-btn {
-    margin-top: 8px;
-    margin-bottom: 20px;
+ .panel-unlock-btn {
+    margin-top: 0;
+    margin-bottom: 0;
     padding: 6px 16px;
     font-size: 13px;
     font-weight: 600;
@@ -52,11 +52,11 @@
     display: flex;
     flex-direction: row;
     justify-content: center;
-    align-items: flex-start;
-    margin-top: auto;
-    margin-bottom: 0;
-    padding-top: 12px;
-    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+    margin-bottom: 8px;
+    padding-top: 0;
+    gap: 10px;
     width: 100%;
     flex-shrink: 0;
 }
@@ -80,7 +80,56 @@
 #monthlyTemperature,
 #precipitationScatter,
 #monthlyPrecipitation {
+    width: 100%;
+    display: block;
     flex-shrink: 0;
+}
+
+#temperatureScatter {
+    height: 392px;
+    margin-bottom: 4px;
+}
+
+#monthlyTemperature {
+    height: 352px;
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+#precipitationScatter {
+    height: 392px;
+    margin-bottom: 4px;
+}
+
+#monthlyPrecipitation {
+    height: 352px;
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+/* Hemisphere month labels */
+.hemisphere-month-label {
+    margin: 8px;
+    color: #888;
+    font-size: 12px;
+}
+
+/* Panel hint styling */
+.panel-hint {
+    margin-bottom: 4px;
+}
+
+/* Climate coordinate display */
+#climate-coord {
+    font-size: 12px;
+    line-height: 1;
+    color: #5c5c5c;
+    margin: 6px;
+    font-weight: 700;
+    letter-spacing: 0em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-align: center;
 }
 
 /* =========================================================
@@ -181,6 +230,7 @@
     gap: 14px;
     padding: 0 8px;
     margin-top: 0;
+    margin-bottom: 12px;
     font-size: 13px;
 }
 
@@ -217,7 +267,7 @@
     #climate-stats span {
         align-items: flex-start;
         width: 100%;
-        padding: 6px 0;
+        padding: 6px;
     }
 
     #climate-stats::-webkit-scrollbar {
@@ -311,29 +361,12 @@
     text-decoration: none;
 }
 
-.panel-metadata .metadata-line {
-    margin-top: 4px;
-}
-
-.panel-metadata a {
-    color: #666666;
-    text-decoration: none;
-}
-
 .panel-metadata a:hover {
     text-decoration: underline;
 }
 
-#climate-coord {
-    font-size: 12px;
-    line-height: 1;
-    color: #5c5c5c;
-    margin-bottom: 4px;
-    font-weight: 700;
-    letter-spacing: 0em;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    text-align: center;
+.panel-metadata .metadata-line {
+    margin-top: 4px;
 }
 
 .climate-stats {

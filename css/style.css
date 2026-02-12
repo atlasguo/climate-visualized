@@ -204,8 +204,7 @@ html, body {
     top: 16px;
     left: 16px;
     z-index: 100;
-    width: 335px;
-    position: relative;
+    width: 400px;
 }
 
 .search-input {
@@ -214,7 +213,7 @@ html, body {
     padding-right: 38px;
     border: 1px solid #d0d0d0;
     border-radius: 3px;
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -247,6 +246,11 @@ html, body {
     padding: 0;
     line-height: 1;
     transition: color 0.2s;
+    display: none;
+}
+
+.search-clear-btn.show {
+    display: block;
 }
 
 .search-clear-btn:hover {
@@ -265,7 +269,12 @@ html, body {
     max-height: 200px;
     overflow-y: auto;
     z-index: 101;
-    width: 290px;
+    width: 355px;
+    display: none;
+}
+
+.search-suggestions.show {
+    display: block;
 }
 
 .search-suggestion-item {
@@ -283,6 +292,84 @@ html, body {
 
 .search-suggestion-item:hover {
     background-color: #f5f5f5;
+}
+
+/* =========================================================
+   Symbol style selector (radio buttons)
+   Top-right control for choosing symbol display style
+   ========================================================= */
+
+.symbol-selector {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 100;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(208, 208, 208, 0.6);
+    border-radius: 4px;
+    padding: 8px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    min-width: 160px;
+}
+
+.selector-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.radio-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.radio-item:hover {
+    opacity: 0.8;
+}
+
+.radio-item input[type="radio"] {
+    margin: 0;
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: #4a90e2;
+    flex-shrink: 0;
+}
+
+.radio-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.radio-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: #333;
+}
+
+.radio-item input[type="radio"]:checked + .radio-content .radio-title {
+    color: #4a90e2;
+    font-weight: 600;
+}
+
+.radio-desc {
+    font-size: 10px;
+    color: #777;
+    line-height: 1.3;
 }
 
 /* =========================================================
