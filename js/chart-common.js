@@ -84,9 +84,9 @@ export const PRECIP_L_FACTOR_CHART   = 0.75;
 /* =========================================================
     Tab2/Tab3 chart opacity (range + hull)
     ========================================================= */
-export const RANGE_OPACITY_UNLOCKED = 0.14;
-export const RANGE_OPACITY_LOCKED_ACTIVE = 0.30;
-export const RANGE_OPACITY_LOCKED_DIM = 0.02;
+export const RANGE_OPACITY_UNLOCKED = 0.15;
+export const RANGE_OPACITY_LOCKED_ACTIVE = 0.4;
+export const RANGE_OPACITY_LOCKED_DIM = 0.05;
 
 /* =========================================================
    Tooltip

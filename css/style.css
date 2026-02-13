@@ -523,7 +523,32 @@ html, body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-} 
+}
+
+#mobile-entry-gate {
+    display: none;
+}
+
+#loading-overlay.gate-mode .spinner,
+#loading-overlay.gate-mode .loading-text {
+    display: none;
+}
+
+#loading-overlay.gate-mode .loading-box {
+    width: min(92vw, 380px);
+    padding: 20px 20px 18px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #d0d0d0;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+    align-items: stretch;
+}
+
+#loading-overlay.gate-mode #mobile-entry-gate {
+    display: block;
+    font-family: inherit;
+    font-size: 13px;
+}
 
 /* =========================================================
    Loading icon
@@ -570,4 +595,58 @@ html, body {
     background: transparent;
     flex-shrink: 0;
     z-index: 20;
+}
+
+#mobile-entry-desc {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #666;
+}
+
+.mobile-entry-linkline {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: #777;
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+.mobile-entry-linkline a {
+    color: var(--link-color);
+    text-decoration: underline;
+}
+
+.mobile-entry-linkline a:hover {
+    color: #4a90e2;
+}
+
+#mobile-entry-btn {
+    margin-top: 14px;
+    display: block;
+    width: auto;
+    min-width: 92px;
+    height: 30px;
+    padding: 0 14px;
+    margin-left: auto;
+    margin-right: auto;
+    border: 1px solid #d0d0d0;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #666;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+#mobile-entry-btn:hover {
+    background: rgba(74, 144, 226, 0.1);
+    border-color: #4a90e2;
+    color: #4a90e2;
+}
+
+#mobile-entry-btn:active {
+    background: rgba(74, 144, 226, 0.16);
 }

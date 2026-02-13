@@ -29,7 +29,6 @@ import { STATE, dispatcher, adjustColor, tempToR, precipToR, screenToLonLat, fin
 import { loadData, loadCountries, loadOcean } from "./data.js";
 import { hideLoading } from "./loading.js";
 import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
-import { tempColor, precipColor } from "./chart-common.js";
 
 /* =========================================================
    Static reference layers
@@ -281,6 +280,17 @@ const TEMP_LINE_ALPHA      = 1.0;
 const TEMP_LINE_WIDTH      = 0.1;
 
 const JAN_LINE_ALPHA = 1.0;
+
+const MAP_POINT_TEMP_SAT_FACTOR = 0.5;
+const MAP_POINT_TEMP_L_FACTOR = 0.75;
+
+// Map-only point color helper: keep chart colors unchanged.
+function tempColorForMapPoint(baseColor) {
+    const hsl = d3.hsl(baseColor);
+    hsl.s *= MAP_POINT_TEMP_SAT_FACTOR;
+    hsl.l *= MAP_POINT_TEMP_L_FACTOR;
+    return hsl.formatHex();
+}
 
 /* =========================================================
    Graticules and reference latitudes
@@ -747,24 +757,23 @@ function drawPointsBatch() {
         const cy = y0 * k + y;
 
         // Set opacity based on lock state or hover state
-        let pointAlpha = 0.5;
+        let pointAlpha = 0.6;
         
         // In point mode: apply transparency effect on hover (like Lock behavior)
         if (hoveredType && !locked) {
             // Hover effect: same type stays full opacity, others become semi-transparent
-            pointAlpha = d.kg_type !== hoveredType ? 0.1 : 0.5;
+            pointAlpha = d.kg_type !== hoveredType ? 0.1 : 0.6;
         } else if (locked && lockedType) {
             // Lock effect: same type full opacity, others become semi-transparent
-            pointAlpha = d.kg_type !== lockedType ? 0.1 : 0.5;
+            pointAlpha = d.kg_type !== lockedType ? 0.1 : 0.6;
         }
         
         ctx.globalAlpha = pointAlpha;
 
-        // Draw point with temperature color fill + precipitation color outline
-        // Colors match Tab1 chart: tempColor for dark/temperature, precipColor for light/precipitation
+        // Draw point with map-specific temperature color (lighter than chart tempColor).
         ctx.beginPath();
         ctx.arc(cx, cy, pointRadius, 0, 2 * Math.PI);
-        ctx.fillStyle = tempColor(d.baseColor);
+        ctx.fillStyle = tempColorForMapPoint(d.baseColor);
         ctx.fill();
     });
     
