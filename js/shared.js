@@ -96,7 +96,11 @@ export function buildQuadtree() {
     }
 
     const pts = STATE.data.map(d => {
-        const [x, y] = STATE.projection([d.lon, d.lat]);
+        let x = d.px;
+        let y = d.py;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            [x, y] = STATE.projection([d.lon, d.lat]);
+        }
         return { x, y, d };
     });
 

@@ -25,9 +25,9 @@ const toggleGeoLines = document.getElementById("toggle-geolines");
    Global application state (moved to shared module)
    ========================================================= */
 
-import { STATE, dispatcher, adjustColor, tempToR, precipToR, screenToLonLat, findNearest, buildQuadtree, findNearestScreen } from "./shared.js";
+import { STATE, dispatcher, adjustColor, tempToR, precipToR, buildQuadtree, findNearestScreen } from "./shared.js";
 import { loadData, loadCountries, loadOcean } from "./data.js";
-import { hideLoading } from "./loading.js";
+import { showLoading, hideLoading } from "./loading.js";
 import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
 
 /* =========================================================
@@ -49,52 +49,240 @@ let symbolStyle = 'point';
 // Currently hovered datum (used for visual highlight)
 let hoveredDatum = null;
 
-// Base map cache dirty flag - only update base map when needed (zoom/pan/toggle)
-// Skip base map redraw when only hover changes
-let baseMapDirty = true;
-
-// Offscreen canvas cache for expensive static layers (ocean, countries)
+// Offscreen caches for staged rendering.
 let oceanCache = null;
 let countriesCache = null;
+let climateLayerCache = null;
 let oceanCacheCtx = null;
 let countriesCacheCtx = null;
+let climateLayerCacheCtx = null;
 let lastOceanCacheZoom = null;
 let lastCountriesCacheZoom = null;
+let climateLayerKey = "";
+let interactionSnapshotCanvas = null;
+let interactionSnapshotCtx = null;
+let zoomStartTransform = null;
+let isInteractingBitmapMode = false;
+let projectedCacheVersion = 0;
+let renderEpoch = 0;
+let pendingRefineJob = null;
+let mapBusyLoadingTimer = null;
+let mapBusyLoadingVisible = false;
+const OCEAN_GLOW_LAYERS = [
+    { width: 0, alpha: 0.52 },
+    { width: 25, alpha: 0.3 },
+    { width: 50, alpha: 0.2 },
+    { width: 100, alpha: 0.1 }
+];
+const OCEAN_VIEWPORT_BUFFER_PX = 110;
+
+function getViewportProjectedBounds(transform = STATE.zoomTransform) {
+    const k = transform?.k || 1;
+    const x = transform?.x || 0;
+    const y = transform?.y || 0;
+    const left = (0 - x) / k;
+    const right = (STATE.width - x) / k;
+    const top = (0 - y) / k;
+    const bottom = (STATE.height - y) / k;
+    return {
+        minX: Math.min(left, right),
+        maxX: Math.max(left, right),
+        minY: Math.min(top, bottom),
+        maxY: Math.max(top, bottom)
+    };
+}
+
+function bboxIntersectsBounds(bbox, bounds) {
+    if (!bbox || !bounds) return false;
+    return !(
+        bbox.maxX < bounds.minX ||
+        bbox.minX > bounds.maxX ||
+        bbox.maxY < bounds.minY ||
+        bbox.minY > bounds.maxY
+    );
+}
+
+function intersectProjectedBounds(a, b) {
+    if (!a || !b) return null;
+    const minX = Math.max(a.minX, b.minX);
+    const maxX = Math.min(a.maxX, b.maxX);
+    const minY = Math.max(a.minY, b.minY);
+    const maxY = Math.min(a.maxY, b.maxY);
+    if (minX >= maxX || minY >= maxY) return null;
+    return { minX, maxX, minY, maxY };
+}
+
+function featureIntersectsProjectedBounds(feature, bounds) {
+    return bboxIntersectsBounds(feature?._projBBox, bounds);
+}
+
+function expandProjectedBounds(bounds, padding) {
+    if (!bounds || !Number.isFinite(padding) || padding <= 0) return bounds;
+    return {
+        minX: bounds.minX - padding,
+        maxX: bounds.maxX + padding,
+        minY: bounds.minY - padding,
+        maxY: bounds.maxY + padding
+    };
+}
+
+function computeProjectedBBoxForObject(geoObj, path) {
+    if (!geoObj || !path) return null;
+    const bounds = path.bounds(geoObj);
+    if (!bounds || bounds.length !== 2) return null;
+    const [[minX, minY], [maxX, maxY]] = bounds;
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+    return { minX, minY, maxX, maxY };
+}
+
+function computeProjectedFeatureBounds() {
+    if (!STATE.projection) return;
+    const path = d3.geoPath(STATE.projection);
+
+    if (COUNTRIES?.features) {
+        for (const feature of COUNTRIES.features) {
+            feature._projBBox = computeProjectedBBoxForObject(feature, path);
+        }
+    }
+
+    if (!OCEAN) return;
+    if (OCEAN.type === "FeatureCollection" && Array.isArray(OCEAN.features)) {
+        let union = null;
+        for (const feature of OCEAN.features) {
+            feature._projBBox = computeProjectedBBoxForObject(feature, path);
+            const b = feature._projBBox;
+            if (!b) continue;
+            if (!union) union = { ...b };
+            else {
+                union.minX = Math.min(union.minX, b.minX);
+                union.maxX = Math.max(union.maxX, b.maxX);
+                union.minY = Math.min(union.minY, b.minY);
+                union.maxY = Math.max(union.maxY, b.maxY);
+            }
+        }
+        OCEAN._projBBox = union;
+    } else {
+        OCEAN._projBBox = computeProjectedBBoxForObject(OCEAN, path);
+    }
+}
+
+function getVisibleOceanFeatures(bounds, bufferProjected = 0) {
+    if (!OCEAN) return [];
+    const effectiveBounds = expandProjectedBounds(bounds, bufferProjected);
+    if (OCEAN.type === "FeatureCollection" && Array.isArray(OCEAN.features)) {
+        return OCEAN.features.filter(feature => featureIntersectsProjectedBounds(feature, effectiveBounds));
+    }
+    return bboxIntersectsBounds(OCEAN._projBBox, effectiveBounds) ? [OCEAN] : [];
+}
+
+function getViewportLonLatBoundsFromProjectedBounds(bounds) {
+    if (!STATE.projection || !bounds) return null;
+    const effectiveBounds = STATE.mapExtent
+        ? intersectProjectedBounds(bounds, STATE.mapExtent)
+        : bounds;
+    if (!effectiveBounds) return null;
+
+    const corners = [
+        [effectiveBounds.minX, effectiveBounds.minY],
+        [effectiveBounds.minX, effectiveBounds.maxY],
+        [effectiveBounds.maxX, effectiveBounds.minY],
+        [effectiveBounds.maxX, effectiveBounds.maxY]
+    ]
+        .map(p => STATE.projection.invert(p))
+        .filter(v => Array.isArray(v) && Number.isFinite(v[0]) && Number.isFinite(v[1]));
+
+    if (!corners.length) return null;
+
+    let minLon = Infinity, maxLon = -Infinity;
+    let minLat = Infinity, maxLat = -Infinity;
+    for (const [lon, lat] of corners) {
+        minLon = Math.min(minLon, lon);
+        maxLon = Math.max(maxLon, lon);
+        minLat = Math.min(minLat, lat);
+        maxLat = Math.max(maxLat, lat);
+    }
+
+    minLon = Math.max(-180, minLon);
+    maxLon = Math.min(180, maxLon);
+    minLat = Math.max(-90, minLat);
+    maxLat = Math.min(90, maxLat);
+    if (
+        !Number.isFinite(minLon) ||
+        !Number.isFinite(maxLon) ||
+        !Number.isFinite(minLat) ||
+        !Number.isFinite(maxLat)
+    ) return null;
+
+    // Guard against degenerate or invalid ranges near projection seam edges.
+    const EPS = 1e-6;
+    if (minLon >= maxLon - EPS || minLat >= maxLat - EPS) return null;
+
+    return { minLon, maxLon, minLat, maxLat };
+}
+
+function buildParallelLine(lat, minLon, maxLon, lonStep) {
+    if (!Number.isFinite(lat) || !Number.isFinite(minLon) || !Number.isFinite(maxLon)) return null;
+    if (minLon >= maxLon) return null;
+    const step = Math.max(0.1, lonStep);
+    const start = Math.ceil(minLon / step) * step;
+    const coordinates = [];
+    coordinates.push([minLon, lat]);
+    for (let lon = start; lon < maxLon; lon += step) {
+        coordinates.push([lon, lat]);
+    }
+    coordinates.push([maxLon, lat]);
+    if (coordinates.length < 2) return null;
+    return { type: "LineString", coordinates };
+}
+
+function buildMeridianLine(lon, minLat, maxLat, latStep) {
+    if (!Number.isFinite(lon) || !Number.isFinite(minLat) || !Number.isFinite(maxLat)) return null;
+    if (minLat >= maxLat) return null;
+    const step = Math.max(0.1, latStep);
+    const start = Math.ceil(minLat / step) * step;
+    const coordinates = [];
+    coordinates.push([lon, minLat]);
+    for (let lat = start; lat < maxLat; lat += step) {
+        coordinates.push([lon, lat]);
+    }
+    coordinates.push([lon, maxLat]);
+    if (coordinates.length < 2) return null;
+    return { type: "LineString", coordinates };
+}
 
 // Check if ocean cache needs to be regenerated
-function needsOceanCacheUpdate() {
-    if (!lastOceanCacheZoom) return true;
-    const { k, x, y } = STATE.zoomTransform;
-    return k !== lastOceanCacheZoom.k || 
-           x !== lastOceanCacheZoom.x || 
-           y !== lastOceanCacheZoom.y;
+function isCacheTransformMatch(cacheTransform, transform) {
+    if (!cacheTransform || !transform) return false;
+    return cacheTransform.k === transform.k &&
+        cacheTransform.x === transform.x &&
+        cacheTransform.y === transform.y;
 }
 
-// Check if countries cache needs to be regenerated
-function needsCountriesCacheUpdate() {
-    if (!lastCountriesCacheZoom) return true;
-    const { k, x, y } = STATE.zoomTransform;
-    return k !== lastCountriesCacheZoom.k || 
-           x !== lastCountriesCacheZoom.x || 
-           y !== lastCountriesCacheZoom.y;
+function makeTransformSnapshot(transform = STATE.zoomTransform) {
+    return { x: transform.x, y: transform.y, k: transform.k };
 }
 
-// Update ocean cache tracking
-function updateOceanCacheTracking() {
-    const { k, x, y } = STATE.zoomTransform;
-    lastOceanCacheZoom = { k, x, y };
+function makeClimateLayerKey(transform, lockedType, hoveredType) {
+    return `${transform.k}|${transform.x}|${transform.y}|${symbolStyle}|${lockedType || ""}|${hoveredType || ""}`;
 }
 
-// Update countries cache tracking
-function updateCountriesCacheTracking() {
-    const { k, x, y } = STATE.zoomTransform;
-    lastCountriesCacheZoom = { k, x, y };
+function hasOceanCache(transform = STATE.zoomTransform) {
+    return !!oceanCache && isCacheTransformMatch(lastOceanCacheZoom, transform);
+}
+
+function hasCountriesCache(transform = STATE.zoomTransform) {
+    return !!countriesCache && isCacheTransformMatch(lastCountriesCacheZoom, transform);
+}
+
+function hasClimateLayerCache(transform = STATE.zoomTransform, lockedType = null, hoveredType = null) {
+    return !!climateLayerCache && climateLayerKey === makeClimateLayerKey(transform, lockedType, hoveredType);
 }
 
 // Invalidate caches (force regeneration on next draw)
 function invalidateCaches() {
     lastOceanCacheZoom = null;
     lastCountriesCacheZoom = null;
+    climateLayerKey = "";
 }
 
 // Initialize offscreen canvases
@@ -107,11 +295,15 @@ function initCaches() {
         countriesCache = document.createElement('canvas');
         countriesCacheCtx = countriesCache.getContext('2d');
     }
+    if (!climateLayerCache) {
+        climateLayerCache = document.createElement('canvas');
+        climateLayerCacheCtx = climateLayerCache.getContext('2d');
+    }
 }
 
 // Resize caches to match main canvas
 function resizeCaches() {
-    if (!oceanCache || !countriesCache) return;
+    if (!oceanCache || !countriesCache || !climateLayerCache) return;
     const w = canvas.width;
     const h = canvas.height;
     if (oceanCache.width !== w || oceanCache.height !== h) {
@@ -122,77 +314,124 @@ function resizeCaches() {
         countriesCache.width = w;
         countriesCache.height = h;
     }
+    if (climateLayerCache.width !== w || climateLayerCache.height !== h) {
+        climateLayerCache.width = w;
+        climateLayerCache.height = h;
+    }
 }
 
-// Generate ocean cache
-function generateOceanCache() {
+function generateOceanCache(transform = STATE.zoomTransform) {
     if (!OCEAN || !oceanCacheCtx) return;
-    
-    const w = oceanCache.width;
-    const h = oceanCache.height;
-    oceanCacheCtx.clearRect(0, 0, w, h);
+    oceanCacheCtx.clearRect(0, 0, oceanCache.width, oceanCache.height);
     oceanCacheCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-    
     const path = d3.geoPath(STATE.projection, oceanCacheCtx);
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const viewportBounds = getViewportProjectedBounds(transform);
+    const bufferProjected = OCEAN_VIEWPORT_BUFFER_PX / Math.max(k, 1e-6);
+    const visibleFeatures = getVisibleOceanFeatures(viewportBounds, bufferProjected);
+
+    if (!visibleFeatures.length) {
+        lastOceanCacheZoom = makeTransformSnapshot(transform);
+        return;
+    }
 
     oceanCacheCtx.save();
     oceanCacheCtx.translate(x, y);
     oceanCacheCtx.scale(k, k);
 
-    // Fill ocean base color
     oceanCacheCtx.beginPath();
-    path(OCEAN);
+    for (const feature of visibleFeatures) {
+        path(feature);
+    }
     oceanCacheCtx.fillStyle = "#e2f4fc";
     oceanCacheCtx.fill("evenodd");
 
-    // Inner glow effect
-    const numLayers = 5;
-    for (let i = 0; i < numLayers; i++) {
-        const t = i / (numLayers - 1);
-        const width = 1 + t * 150;
-        const alpha = 0.4 * (1 - t);
-        
+    oceanCacheCtx.beginPath();
+    for (const feature of visibleFeatures) {
+        path(feature);
+    }
+    oceanCacheCtx.clip("evenodd");
+
+    for (const layer of OCEAN_GLOW_LAYERS) {
         oceanCacheCtx.beginPath();
-        path(OCEAN);
-        oceanCacheCtx.strokeStyle = `rgba(248, 252, 255, ${alpha})`;
-        oceanCacheCtx.lineWidth = width / k;
+        for (const feature of visibleFeatures) {
+            path(feature);
+        }
+        const glowColor = layer.color || "250, 252, 255";
+        oceanCacheCtx.strokeStyle = `rgba(${glowColor}, ${layer.alpha})`;
+        oceanCacheCtx.lineWidth = layer.width / k;
         oceanCacheCtx.lineCap = "round";
         oceanCacheCtx.lineJoin = "round";
         oceanCacheCtx.stroke();
     }
-
     oceanCacheCtx.restore();
+
+    lastOceanCacheZoom = makeTransformSnapshot(transform);
 }
 
 // Generate countries cache
-function generateCountriesCache() {
+function generateCountriesCache(transform = STATE.zoomTransform) {
     if (!COUNTRIES || !countriesCacheCtx) return;
     
-    const w = countriesCache.width;
-    const h = countriesCache.height;
-    countriesCacheCtx.clearRect(0, 0, w, h);
+    countriesCacheCtx.clearRect(0, 0, countriesCache.width, countriesCache.height);
     countriesCacheCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     
     const path = d3.geoPath(STATE.projection, countriesCacheCtx);
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const b = STATE.mapExtent;
+    const viewportBounds = getViewportProjectedBounds(transform);
 
     countriesCacheCtx.save();
     countriesCacheCtx.translate(x, y);
     countriesCacheCtx.scale(k, k);
 
-    countriesCacheCtx.beginPath();
-    path(COUNTRIES);
-    
     const zoomFactor = Math.min(k, 6);
-    countriesCacheCtx.strokeStyle = "#2b2b2b";
+    countriesCacheCtx.strokeStyle = "#7a7a7a";
     countriesCacheCtx.lineWidth = (0.15 + (zoomFactor - 1) / 5 * 1.5) / k;
-    countriesCacheCtx.globalAlpha = 0.6;
-    countriesCacheCtx.stroke();
+    countriesCacheCtx.globalAlpha = 0.45;
+
+    // Clip slightly inside world extent to avoid projection seam strokes on the outer rectangle.
+    if (b) {
+        const insetScreenPx = 1;
+        const insetProjected = insetScreenPx / Math.max(k, 1e-6);
+        countriesCacheCtx.beginPath();
+        countriesCacheCtx.rect(
+            b.minX + insetProjected,
+            b.minY + insetProjected,
+            Math.max(0, (b.maxX - b.minX) - insetProjected * 2),
+            Math.max(0, (b.maxY - b.minY) - insetProjected * 2)
+        );
+        countriesCacheCtx.clip();
+    }
+
+    // Stroke features one-by-one to avoid collection-level seam joins that can form a rectangle.
+    for (const feature of COUNTRIES.features || []) {
+        if (!featureIntersectsProjectedBounds(feature, viewportBounds)) continue;
+        countriesCacheCtx.beginPath();
+        path(feature);
+        countriesCacheCtx.stroke();
+    }
     
     // Reset alpha
     countriesCacheCtx.globalAlpha = 1.0;
     countriesCacheCtx.restore();
+    lastCountriesCacheZoom = makeTransformSnapshot(transform);
+}
+
+function drawClimateLayerToCache(transform = STATE.zoomTransform, lockedType = null, hoveredType = null) {
+    if (!climateLayerCacheCtx) return;
+    if (hasClimateLayerCache(transform, lockedType, hoveredType)) return;
+
+    climateLayerCacheCtx.setTransform(1, 0, 0, 1, 0, 0);
+    climateLayerCacheCtx.clearRect(0, 0, climateLayerCache.width, climateLayerCache.height);
+    climateLayerCacheCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    if (symbolStyle === "point") {
+        drawPointsBatchOnContext(climateLayerCacheCtx, transform, lockedType, hoveredType);
+    } else {
+        drawGlyphsBatchOnContext(climateLayerCacheCtx, transform, lockedType, hoveredType);
+    }
+    climateLayerCacheCtx.globalAlpha = 1.0;
+    climateLayerKey = makeClimateLayerKey(transform, lockedType, hoveredType);
 }
 
 function getCountryNameForDatum(d) {
@@ -278,11 +517,19 @@ const TEMP_LINE_SAT_FACTOR = 0.75;
 const TEMP_LINE_L_FACTOR   = 0.5;
 const TEMP_LINE_ALPHA      = 1.0;
 const TEMP_LINE_WIDTH      = 0.1;
+const MAP_CONTENT_FRAME_COLOR = "#d6d6d6";
+const MAP_CONTENT_FRAME_WIDTH = 3;
 
 const JAN_LINE_ALPHA = 1.0;
 
 const MAP_POINT_TEMP_SAT_FACTOR = 0.5;
 const MAP_POINT_TEMP_L_FACTOR = 0.75;
+const MAP_BUSY_LOADING_DELAY_MS = 140;
+const GLYPH_SAMPLE_SIZE = 2000;
+const GLYPH_FALLBACK_RADIUS = 1.2;
+const GLYPH_ANGLE_COUNT = 12;
+const GLYPH_SIN = Array.from({ length: GLYPH_ANGLE_COUNT }, (_, i) => Math.sin(i * 2 * Math.PI / GLYPH_ANGLE_COUNT));
+const GLYPH_COS = Array.from({ length: GLYPH_ANGLE_COUNT }, (_, i) => Math.cos(i * 2 * Math.PI / GLYPH_ANGLE_COUNT));
 
 // Map-only point color helper: keep chart colors unchanged.
 function tempColorForMapPoint(baseColor) {
@@ -292,12 +539,74 @@ function tempColorForMapPoint(baseColor) {
     return hsl.formatHex();
 }
 
+function initInteractionSnapshot() {
+    if (!interactionSnapshotCanvas) {
+        interactionSnapshotCanvas = document.createElement("canvas");
+        interactionSnapshotCtx = interactionSnapshotCanvas.getContext("2d");
+    }
+}
+
+function resizeInteractionSnapshot() {
+    initInteractionSnapshot();
+    if (!interactionSnapshotCanvas) return;
+    if (interactionSnapshotCanvas.width !== canvas.width || interactionSnapshotCanvas.height !== canvas.height) {
+        interactionSnapshotCanvas.width = canvas.width;
+        interactionSnapshotCanvas.height = canvas.height;
+    }
+}
+
+function beginInteractionBitmapMode() {
+    resizeInteractionSnapshot();
+    if (!interactionSnapshotCtx) return false;
+    zoomStartTransform = { x: STATE.zoomTransform.x, y: STATE.zoomTransform.y, k: STATE.zoomTransform.k };
+    const { locked, data: lockedData } = getLockState();
+    const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
+    const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
+
+    interactionSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
+    interactionSnapshotCtx.clearRect(0, 0, interactionSnapshotCanvas.width, interactionSnapshotCanvas.height);
+    interactionSnapshotCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    if (symbolStyle === "point") {
+        drawPointsBatchOnContext(interactionSnapshotCtx, zoomStartTransform, lockedType, hoveredType);
+    } else {
+        drawGlyphsBatchOnContext(interactionSnapshotCtx, zoomStartTransform, lockedType, hoveredType);
+    }
+    interactionSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
+    interactionSnapshotCtx.globalAlpha = 1.0;
+
+    isInteractingBitmapMode = true;
+    return true;
+}
+
+function endInteractionBitmapMode() {
+    isInteractingBitmapMode = false;
+    zoomStartTransform = null;
+}
+
+function drawInteractionBitmap() {
+    if (!isInteractingBitmapMode || !interactionSnapshotCanvas || !zoomStartTransform) return false;
+    if (!zoomStartTransform.k) return false;
+
+    const scale = STATE.zoomTransform.k / zoomStartTransform.k;
+    const tx = STATE.zoomTransform.x - zoomStartTransform.x * scale;
+    const ty = STATE.zoomTransform.y - zoomStartTransform.y * scale;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(
+        interactionSnapshotCanvas,
+        tx * CANVAS_DPR,
+        ty * CANVAS_DPR,
+        interactionSnapshotCanvas.width * scale,
+        interactionSnapshotCanvas.height * scale
+    );
+    return true;
+}
+
 /* =========================================================
    Graticules and reference latitudes
    ========================================================= */
-
-const graticuleMajor = d3.geoGraticule().step([30, 30]);
-const graticuleMinor = d3.geoGraticule().step([10, 10]);
 
 const referenceLatitudes = [
     { lat:  66.5, dashed: true, name: "Arctic Circle" },
@@ -324,13 +633,17 @@ function resize() {
     ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
 
     if (STATE.projection) {
+        cancelRefineJob();
+        endInteractionBitmapMode();
         updateProjection();
+        updateProjectedDataCache();
         computeSymbolRadius();
         computeMapBounds();
         computeMapExtent();
+        buildQuadtree();
         constrainTransform();
-        baseMapDirty = true;  // Canvas was cleared, need to redraw base map
-        invalidateCaches();   // Invalidate caches due to size change
+        invalidateCaches();
+        resizeInteractionSnapshot();
         redraw();
     }
 }
@@ -361,6 +674,54 @@ function updateProjection() {
                 }
             }))
         });
+    projectedCacheVersion += 1;
+    computeProjectedFeatureBounds();
+}
+
+function updateProjectedDataCache() {
+    if (!STATE.projection || !STATE.data) return;
+    STATE.data.forEach(d => {
+        const [px, py] = STATE.projection([d.lon, d.lat]);
+        d.px = px;
+        d.py = py;
+        d.projectedCacheVersion = projectedCacheVersion;
+    });
+}
+
+function buildGlyphRenderCache() {
+    if (!STATE.data) return;
+    STATE.data.forEach(d => {
+        d.tempR12 = d.t.map(v => tempToR(v));
+        d.precipR12 = d.p.map(v => precipToR(v));
+        d.glyphPrecipFill = adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
+        d.glyphTempFill = adjustColor(d.baseColor, TEMP_FILL_SAT_FACTOR, TEMP_FILL_L_FACTOR);
+        d.glyphTempStroke = adjustColor(d.baseColor, TEMP_LINE_SAT_FACTOR, TEMP_LINE_L_FACTOR);
+    });
+}
+
+function nearestDistanceFromQuadtree(quadtree, p) {
+    let minDist2 = Infinity;
+    quadtree.visit((node, x0, y0, x1, y1) => {
+        const dx = p.x < x0 ? x0 - p.x : p.x > x1 ? p.x - x1 : 0;
+        const dy = p.y < y0 ? y0 - p.y : p.y > y1 ? p.y - y1 : 0;
+        if (dx * dx + dy * dy > minDist2) return true;
+
+        if (!node.length) {
+            let q = node;
+            do {
+                if (q.data !== p) {
+                    const ddx = q.data.x - p.x;
+                    const ddy = q.data.y - p.y;
+                    const dist2 = ddx * ddx + ddy * ddy;
+                    if (dist2 < minDist2) minDist2 = dist2;
+                }
+                q = q.next;
+            } while (q);
+        }
+        return false;
+    });
+
+    return Number.isFinite(minDist2) ? Math.sqrt(minDist2) : NaN;
 }
 
 /* =========================================================
@@ -370,19 +731,33 @@ function updateProjection() {
 
 // Estimate base symbol radius from median nearest-neighbor distance
 function computeSymbolRadius() {
-    const pts = STATE.data.map(d => STATE.projection([d.lon, d.lat]));
-    const distances = [];
+    const pts = STATE.data
+        .map(d => ({ x: d.px, y: d.py }))
+        .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (pts.length < 2) {
+        STATE.symbolRadius = GLYPH_FALLBACK_RADIUS;
+        return;
+    }
 
-    for (let i = 0; i < pts.length; i++) {
-        let minDist = Infinity;
-        for (let j = 0; j < pts.length; j++) {
-            if (i === j) continue;
-            const dx = pts[j][0] - pts[i][0];
-            const dy = pts[j][1] - pts[i][1];
-            const dist = Math.hypot(dx, dy);
-            if (dist < minDist) minDist = dist;
+    const sampleSize = Math.min(GLYPH_SAMPLE_SIZE, pts.length);
+    const step = Math.max(1, Math.floor(pts.length / sampleSize));
+    const sampled = [];
+    for (let i = 0; i < pts.length && sampled.length < sampleSize; i += step) {
+        sampled.push(pts[i]);
+    }
+
+    const quadtree = d3.quadtree().x(p => p.x).y(p => p.y).addAll(pts);
+    const distances = [];
+    sampled.forEach(p => {
+        const dist = nearestDistanceFromQuadtree(quadtree, p);
+        if (Number.isFinite(dist)) {
+            distances.push(dist);
         }
-        if (isFinite(minDist)) distances.push(minDist);
+    });
+
+    if (!distances.length) {
+        STATE.symbolRadius = GLYPH_FALLBACK_RADIUS;
+        return;
     }
 
     distances.sort((a, b) => a - b);
@@ -392,7 +767,7 @@ function computeSymbolRadius() {
             ? distances[m]
             : 0.5 * (distances[m - 1] + distances[m]);
 
-    STATE.symbolRadius = median / 2;
+    STATE.symbolRadius = Math.max(GLYPH_FALLBACK_RADIUS, median / 2);
 }
 
 /* =========================================================
@@ -405,14 +780,21 @@ function computeMapBounds() {
     let minY = Infinity, maxY = -Infinity;
 
     STATE.data.forEach(d => {
-        const [x, y] = STATE.projection([d.lon, d.lat]);
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
+        if (!Number.isFinite(d.px) || !Number.isFinite(d.py)) return;
+        minX = Math.min(minX, d.px);
+        maxX = Math.max(maxX, d.px);
+        minY = Math.min(minY, d.py);
+        maxY = Math.max(maxY, d.py);
     });
 
     const pad = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * 2;
+
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+        minX = 0;
+        minY = 0;
+        maxX = STATE.width;
+        maxY = STATE.height;
+    }
 
     STATE.mapBounds = {
         minX: minX - pad,
@@ -455,26 +837,46 @@ function constrainTransform() {
     const t = STATE.zoomTransform;
     const k = t.k;
     const b = STATE.mapBounds;
+    // Allow panning beyond bounds by a fixed geographic margin (10 degrees on each side).
+    let overscrollX = 0;
+    let overscrollY = 0;
+    if (STATE.projection) {
+        const center = STATE.projection([0, 0]);
+        const lon10 = STATE.projection([10, 0]);
+        const lat10 = STATE.projection([0, 10]);
+        if (center && lon10 && lat10) {
+            overscrollX = Math.abs(lon10[0] - center[0]) * k;
+            overscrollY = Math.abs(lat10[1] - center[1]) * k;
+        }
+    }
 
     const w = (b.maxX - b.minX) * k;
     const h = (b.maxY - b.minY) * k;
 
-    t.x = w <= STATE.width
-        ? (STATE.width - w) / 2 - b.minX * k
-        : Math.min(-b.minX * k, Math.max(STATE.width - b.maxX * k, t.x));
+    const minX = STATE.width - b.maxX * k - overscrollX;
+    const maxX = -b.minX * k + overscrollX;
+    if (minX <= maxX) {
+        t.x = Math.min(maxX, Math.max(minX, t.x));
+    } else {
+        t.x = (STATE.width - w) / 2 - b.minX * k;
+    }
 
-    t.y = h <= STATE.height
-        ? (STATE.height - h) / 2 - b.minY * k
-        : Math.min(-b.minY * k, Math.max(STATE.height - b.maxY * k, t.y));
+    const minY = STATE.height - b.maxY * k - overscrollY;
+    const maxY = -b.minY * k + overscrollY;
+    if (minY <= maxY) {
+        t.y = Math.min(maxY, Math.max(minY, t.y));
+    } else {
+        t.y = (STATE.height - h) / 2 - b.minY * k;
+    }
 }
 
 /* =========================================================
    Background and graticules
    ========================================================= */
 
-function drawMapBackground() {
+function drawMapBackground(transform = STATE.zoomTransform) {
     const b = STATE.mapExtent;
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
 
     ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     ctx.fillStyle = "#ffffff";
@@ -489,76 +891,42 @@ function drawMapBackground() {
     );
 }
 
-function drawOcean() {
-    if (!OCEAN || !showOcean) return;
-    
+function drawMapContentFrame(transform = STATE.zoomTransform) {
+    const b = STATE.mapExtent;
+    if (!b) return;
+    const { x, y, k } = transform;
+    const left = b.minX * k + x;
+    const top = b.minY * k + y;
+    const width = (b.maxX - b.minX) * k;
+    const height = (b.maxY - b.minY) * k;
+
     ctx.save();
-    
-    // During zoom: use existing cache if available
-    if (isZooming && oceanCache && lastOceanCacheZoom) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(oceanCache, 0, 0);
-        ctx.restore();
-        return;
-    }
-    
-    // Use cached version if available and valid
-    if (oceanCache && lastOceanCacheZoom && !needsOceanCacheUpdate()) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(oceanCache, 0, 0);
-        ctx.restore();
-        return;
-    }
-    
-    // Regenerate cache
-    initCaches();
-    resizeCaches();
-    generateOceanCache();
-    updateOceanCacheTracking();
-    
-    // Draw from cache
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(oceanCache, 0, 0);
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    ctx.strokeStyle = MAP_CONTENT_FRAME_COLOR;
+    ctx.lineWidth = MAP_CONTENT_FRAME_WIDTH;
+    ctx.strokeRect(left, top, width, height);
     ctx.restore();
 }
 
-function drawCountries() {
-    if (!COUNTRIES || !showBorders) return;
-    
-    ctx.save();
-    
-    // During zoom: use existing cache if available
-    if (isZooming && countriesCache && lastCountriesCacheZoom) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(countriesCache, 0, 0);
-        ctx.restore();
-        return;
-    }
-    
-    // Use cached version if available and valid
-    if (countriesCache && lastCountriesCacheZoom && !needsCountriesCacheUpdate()) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(countriesCache, 0, 0);
-        ctx.restore();
-        return;
-    }
-    
-    // Regenerate cache
-    initCaches();
-    resizeCaches();
-    generateCountriesCache();
-    updateCountriesCacheTracking();
-    
-    // Draw from cache
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(countriesCache, 0, 0);
-    ctx.restore();
-}
 
-function drawGraticules() {
+function drawGraticules(transform = STATE.zoomTransform) {
     if (!showGraticules) return;
+    const bounds = getViewportProjectedBounds(transform);
+    drawGraticulesViewport(transform, bounds);
+}
+
+function drawGraticulesViewport(transform = STATE.zoomTransform, bounds = getViewportProjectedBounds(transform)) {
+    if (!showGraticules || !STATE.projection) return;
+    const geoBounds = getViewportLonLatBoundsFromProjectedBounds(bounds);
+    if (!geoBounds) return;
+
     const path = d3.geoPath(STATE.projection, ctx);
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const lineSampleStep = k < 6 ? 1 : 0.5;
+    const lonStartMinor = Math.ceil(geoBounds.minLon / 10) * 10;
+    const lonStartMajor = Math.ceil(geoBounds.minLon / 30) * 30;
+    const latStartMinor = Math.ceil(geoBounds.minLat / 10) * 10;
+    const latStartMajor = Math.ceil(geoBounds.minLat / 30) * 30;
 
     ctx.save();
     ctx.translate(x, y);
@@ -567,25 +935,57 @@ function drawGraticules() {
     // Adjust stroke width based on zoom level
     const zoomFactor = Math.min(k, 6); // cap zoom effect at 6x
 
-    ctx.beginPath();
-    path(graticuleMinor());
     ctx.strokeStyle = "#e0e0e0";
     ctx.lineWidth = (0.25 + (zoomFactor - 1) / 5 * 0.5) / k; // ranges from 0.25 to 0.75
-    ctx.stroke();
+    for (let lon = lonStartMinor; lon <= geoBounds.maxLon; lon += 10) {
+        const line = buildMeridianLine(lon, geoBounds.minLat, geoBounds.maxLat, lineSampleStep);
+        if (!line) continue;
+        ctx.beginPath();
+        path(line);
+        ctx.stroke();
+    }
+    for (let lat = latStartMinor; lat <= geoBounds.maxLat; lat += 10) {
+        const line = buildParallelLine(lat, geoBounds.minLon, geoBounds.maxLon, lineSampleStep);
+        if (!line) continue;
+        ctx.beginPath();
+        path(line);
+        ctx.stroke();
+    }
 
-    ctx.beginPath();
-    path(graticuleMajor());
     ctx.strokeStyle = "#c0c0c0";
     ctx.lineWidth = (0.5 + (zoomFactor - 1) / 5 * 1.0) / k; // ranges from 0.5 to 1.5
-    ctx.stroke();
+    for (let lon = lonStartMajor; lon <= geoBounds.maxLon; lon += 30) {
+        const line = buildMeridianLine(lon, geoBounds.minLat, geoBounds.maxLat, lineSampleStep);
+        if (!line) continue;
+        ctx.beginPath();
+        path(line);
+        ctx.stroke();
+    }
+    for (let lat = latStartMajor; lat <= geoBounds.maxLat; lat += 30) {
+        const line = buildParallelLine(lat, geoBounds.minLon, geoBounds.maxLon, lineSampleStep);
+        if (!line) continue;
+        ctx.beginPath();
+        path(line);
+        ctx.stroke();
+    }
 
     ctx.restore();
 }
 
-function drawGeographicLines() {
+function drawGeographicLines(transform = STATE.zoomTransform) {
     if (!showGeoLines) return;
+    const bounds = getViewportProjectedBounds(transform);
+    drawGeographicLinesViewport(transform, bounds);
+}
+
+function drawGeographicLinesViewport(transform = STATE.zoomTransform, bounds = getViewportProjectedBounds(transform)) {
+    if (!showGeoLines || !STATE.projection) return;
+    const geoBounds = getViewportLonLatBoundsFromProjectedBounds(bounds);
+    if (!geoBounds) return;
+
     const path = d3.geoPath(STATE.projection, ctx);
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const lineSampleStep = k < 6 ? 1 : 0.5;
 
     ctx.save();
     ctx.translate(x, y);
@@ -595,10 +995,9 @@ function drawGeographicLines() {
     const zoomFactor = Math.min(k, 6); // cap zoom effect at 6x
 
     referenceLatitudes.forEach(d => {
-        const line = {
-            type: "LineString",
-            coordinates: d3.range(-180, 181, 1).map(lon => [lon, d.lat])
-        };
+        if (d.lat < geoBounds.minLat || d.lat > geoBounds.maxLat) return;
+        const line = buildParallelLine(d.lat, geoBounds.minLon, geoBounds.maxLon, lineSampleStep);
+        if (!line) return;
         ctx.beginPath();
         path(line);
         ctx.setLineDash(d.dashed ? [6 / k, 4 / k] : []);
@@ -624,7 +1023,7 @@ function drawGeographicLines() {
 
 // Draw a station's precipitation and temperature glyph at projected position (fill + outline + January line)
 // lockedType: null (not locked) or kg_type string (locked to this type)
-function drawGlyph(d, lockedType = null, hoveredType = null) {
+function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredType = null) {
     // Quickly determine if this glyph should be faded
     // Priority: locked > hovered (if not locked) > none
     let glyphAlpha = 1.0;
@@ -633,106 +1032,77 @@ function drawGlyph(d, lockedType = null, hoveredType = null) {
         glyphAlpha = 0.2;
     }
 
-    // Clamp latitude and longitude to valid ranges
-    let lat = Math.max(-90, Math.min(90, d.lat));
-    let lon = Math.max(-180, Math.min(180, d.lon));
-    const [x0, y0] = STATE.projection([lon, lat]);
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const x0 = d.px;
+    const y0 = d.py;
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
 
     const cx = x0 * k + x;
     const cy = y0 * k + y;
 
     const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * k;
     const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+    const tempR12 = d.tempR12 || d.t.map(v => tempToR(v));
+    const precipR12 = d.precipR12 || d.p.map(v => precipToR(v));
+    const precipFill = d.glyphPrecipFill || adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
+    const tempFill = d.glyphTempFill || adjustColor(d.baseColor, TEMP_FILL_SAT_FACTOR, TEMP_FILL_L_FACTOR);
+    const tempStroke = d.glyphTempStroke || adjustColor(d.baseColor, TEMP_LINE_SAT_FACTOR, TEMP_LINE_L_FACTOR);
 
-    const angles = d3.range(12).map(i => i * 2 * Math.PI / 12);
-
-    ctx.save();
-    ctx.translate(cx, cy);
+    drawCtx.save();
+    drawCtx.translate(cx, cy);
 
     // Precip ring
-    ctx.beginPath();
-    angles.forEach((a, i) => {
-        const r = precipToR(d.p[i]) * R_PRECIP;
-        ctx.lineTo(Math.sin(a) * r, -Math.cos(a) * r);
-    });
-    ctx.closePath();
-    ctx.fillStyle = adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
-    ctx.globalAlpha = PRECIP_ALPHA * glyphAlpha;
-    ctx.fill();
+    drawCtx.beginPath();
+    for (let i = 0; i < GLYPH_ANGLE_COUNT; i++) {
+        const r = precipR12[i] * R_PRECIP;
+        drawCtx.lineTo(GLYPH_SIN[i] * r, -GLYPH_COS[i] * r);
+    }
+    drawCtx.closePath();
+    drawCtx.fillStyle = precipFill;
+    drawCtx.globalAlpha = PRECIP_ALPHA * glyphAlpha;
+    drawCtx.fill();
 
     // Temp fill
-    ctx.beginPath();
-    angles.forEach((a, i) => {
-        const r = tempToR(d.t[i]) * R_BASE;
-        ctx.lineTo(Math.sin(a) * r, -Math.cos(a) * r);
-    });
-    ctx.closePath();
-    ctx.fillStyle = adjustColor(d.baseColor, TEMP_FILL_SAT_FACTOR, TEMP_FILL_L_FACTOR);
-    ctx.globalAlpha = TEMP_FILL_ALPHA * glyphAlpha;
-    ctx.fill();
+    drawCtx.beginPath();
+    for (let i = 0; i < GLYPH_ANGLE_COUNT; i++) {
+        const r = tempR12[i] * R_BASE;
+        drawCtx.lineTo(GLYPH_SIN[i] * r, -GLYPH_COS[i] * r);
+    }
+    drawCtx.closePath();
+    drawCtx.fillStyle = tempFill;
+    drawCtx.globalAlpha = TEMP_FILL_ALPHA * glyphAlpha;
+    drawCtx.fill();
 
     // Temp outline
-    ctx.beginPath();
-    angles.forEach((a, i) => {
-        const r = tempToR(d.t[i]) * R_BASE;
-        ctx.lineTo(Math.sin(a) * r, -Math.cos(a) * r);
-    });
-    ctx.closePath();
-    ctx.strokeStyle = adjustColor(d.baseColor, TEMP_LINE_SAT_FACTOR, TEMP_LINE_L_FACTOR);
-    ctx.globalAlpha = TEMP_LINE_ALPHA * glyphAlpha;
-    ctx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
-    ctx.stroke();
+    drawCtx.beginPath();
+    for (let i = 0; i < GLYPH_ANGLE_COUNT; i++) {
+        const r = tempR12[i] * R_BASE;
+        drawCtx.lineTo(GLYPH_SIN[i] * r, -GLYPH_COS[i] * r);
+    }
+    drawCtx.closePath();
+    drawCtx.strokeStyle = tempStroke;
+    drawCtx.globalAlpha = TEMP_LINE_ALPHA * glyphAlpha;
+    drawCtx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
+    drawCtx.stroke();
 
     // Jan line
-    const janR = tempToR(d.t[0]) * R_BASE;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, -janR);
-    ctx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
-    ctx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
-    ctx.stroke();
+    const janR = tempR12[0] * R_BASE;
+    drawCtx.beginPath();
+    drawCtx.moveTo(0, 0);
+    drawCtx.lineTo(0, -janR);
+    drawCtx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
+    drawCtx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
+    drawCtx.stroke();
 
-    ctx.restore();
-}
-
-// Draw a station as a simple circular point colored by climate type
-// Optimized to avoid redundant function calls
-function drawPoint(d) {
-    // Clamp latitude and longitude to valid ranges
-    let lat = Math.max(-90, Math.min(90, d.lat));
-    let lon = Math.max(-180, Math.min(180, d.lon));
-    const [x0, y0] = STATE.projection([lon, lat]);
-    const { x, y, k } = STATE.zoomTransform;
-
-    const cx = x0 * k + x;
-    const cy = y0 * k + y;
-
-    // Draw point with base color
-    const pointRadius = STATE.symbolRadius * DENSITY_FACTOR * k * 0.6;
-    ctx.beginPath();
-    ctx.arc(cx, cy, pointRadius, 0, 2 * Math.PI);
-    ctx.fillStyle = d.baseColor;
-    ctx.fill();
-
-    // Add subtle outline
-    ctx.strokeStyle = adjustColor(d.baseColor, 1.0, 0.3);
-    ctx.lineWidth = 2 * k;
-    ctx.stroke();
+    drawCtx.restore();
 }
 
 // Batch render all points with optimized opacity handling and performance
-function drawPointsBatch() {
+function drawPointsBatchOnContext(drawCtx, transform, lockedType = null, hoveredType = null) {
     if (!STATE.data || !STATE.data.length) return;
 
-    // Get lock state once
-    const { locked, data: lockedData } = getLockState();
-    const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
-    
-    // Get hovered state (for point mode: apply same effect as lock on hover)
-    const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
-
-    const { x, y, k } = STATE.zoomTransform;
+    const { x, y, k } = transform;
+    const locked = lockedType !== null;
     const pointRadius = STATE.symbolRadius * DENSITY_FACTOR * k * 0.8;
     
     // Skip rendering if points are too small to see
@@ -746,8 +1116,10 @@ function drawPointsBatch() {
     const viewportBottom = (STATE.height - y) / k + viewportPadding;
 
     STATE.data.forEach(d => {
+        const x0 = d.px;
+        const y0 = d.py;
+        if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
         // Quick viewport check in projected coordinates (before transform)
-        const [x0, y0] = STATE.projection([d.lon, d.lat]);
         if (x0 < viewportLeft || x0 > viewportRight || 
             y0 < viewportTop || y0 > viewportBottom) {
             return; // Skip this point, it's off-screen
@@ -768,17 +1140,38 @@ function drawPointsBatch() {
             pointAlpha = d.kg_type !== lockedType ? 0.1 : 0.6;
         }
         
-        ctx.globalAlpha = pointAlpha;
+        drawCtx.globalAlpha = pointAlpha;
 
         // Draw point with map-specific temperature color (lighter than chart tempColor).
-        ctx.beginPath();
-        ctx.arc(cx, cy, pointRadius, 0, 2 * Math.PI);
-        ctx.fillStyle = tempColorForMapPoint(d.baseColor);
-        ctx.fill();
+        drawCtx.beginPath();
+        drawCtx.arc(cx, cy, pointRadius, 0, 2 * Math.PI);
+        drawCtx.fillStyle = tempColorForMapPoint(d.baseColor);
+        drawCtx.fill();
     });
     
     // Reset global alpha
-    ctx.globalAlpha = 1.0;
+    drawCtx.globalAlpha = 1.0;
+}
+
+function drawGlyphsBatchOnContext(drawCtx, transform, lockedType = null, hoveredType = null) {
+    if (!STATE.data || !STATE.data.length) return;
+    const { x, y, k } = transform;
+    const maxGlyphRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * k;
+    if (maxGlyphRadius < 0.5) return;
+
+    const viewportPadding = maxGlyphRadius + 2;
+    const viewportLeft = -viewportPadding - x / k;
+    const viewportRight = (STATE.width - x) / k + viewportPadding;
+    const viewportTop = -viewportPadding - y / k;
+    const viewportBottom = (STATE.height - y) / k + viewportPadding;
+
+    STATE.data.forEach(d => {
+        const x0 = d.px;
+        const y0 = d.py;
+        if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
+        if (x0 < viewportLeft || x0 > viewportRight || y0 < viewportTop || y0 > viewportBottom) return;
+        drawGlyphOnContext(drawCtx, d, transform, lockedType, hoveredType);
+    });
 }
 
 /* =========================================================
@@ -847,13 +1240,7 @@ function buildAxisLabelSpecs(width, height, zoomTransform) {
     const lonLabels = [];
     if (showGraticules) {
         const lonStep = k <= 3 ? 30 : 10;
-        const lonSet = new Set();
-        for (let lon = Math.ceil(minLon / lonStep) * lonStep; lon <= maxLon; lon += lonStep) {
-            if (lon < -180 || lon > 180) continue;
-            lonSet.add(lon);
-        }
-        lonSet.forEach(lon => {
-            if (lon < -180 || lon > 180) return;
+        for (let lon = -180; lon <= 180; lon += lonStep) {
             const [px, py] = STATE.projection([lon, 0]);
             const screenX = px * k + x;
             if (screenX > 0 && screenX < width) {
@@ -865,7 +1252,7 @@ function buildAxisLabelSpecs(width, height, zoomTransform) {
                     baseline: "top"
                 });
             }
-        });
+        }
     }
 
     return { latLabels, lonLabels };
@@ -892,13 +1279,13 @@ function renderAxisLabelSpecs(ctx, specs, fontSize, scale = 1) {
     specs.lonLabels.forEach(renderLine);
 }
 
-function drawAxisLabels() {
+function drawAxisLabels(transform = STATE.zoomTransform) {
     if (!STATE.projection) return;
     // Skip if neither graticules nor geographic lines are visible
     if (!showGraticules && !showGeoLines) return;
     ctx.save();
     ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-    const specs = buildAxisLabelSpecs(STATE.width, STATE.height, STATE.zoomTransform);
+    const specs = buildAxisLabelSpecs(STATE.width, STATE.height, transform);
     renderAxisLabelSpecs(ctx, specs, 11);
     ctx.restore();
 }
@@ -914,119 +1301,180 @@ export function drawAxisLabelsForExport(targetCtx, overlayScale, fontSize = 26, 
     targetCtx.restore();
 }
 
-// Draw all base map layers (static content that doesn't change during zoom/pan)
-function drawBaseMap() {
-    drawMapBackground();
-    if (showOcean) drawOcean();
-    if (showBorders) drawCountries();
-    if (showGraticules) drawGraticules();
-    if (showGeoLines) drawGeographicLines();
-    if (showGraticules || showGeoLines) drawAxisLabels();
+function ensureBaseLayerCaches(transform = STATE.zoomTransform, options = { ocean: true, countries: true }) {
+    initCaches();
+    resizeCaches();
+    if (showOcean && options.ocean && !hasOceanCache(transform)) {
+        generateOceanCache(transform);
+    }
+    if (showBorders && options.countries && !hasCountriesCache(transform)) {
+        generateCountriesCache(transform);
+    }
 }
 
+function scheduleMapBusyLoadingOverlay() {
+    if (mapBusyLoadingVisible || mapBusyLoadingTimer) return;
+    mapBusyLoadingTimer = setTimeout(() => {
+        mapBusyLoadingTimer = null;
+        if (!pendingRefineJob) return;
+        showLoading("Loading map...");
+        mapBusyLoadingVisible = true;
+    }, MAP_BUSY_LOADING_DELAY_MS);
+}
 
+function clearMapBusyLoadingOverlay() {
+    if (mapBusyLoadingTimer) {
+        clearTimeout(mapBusyLoadingTimer);
+        mapBusyLoadingTimer = null;
+    }
+    if (mapBusyLoadingVisible) {
+        hideLoading();
+        mapBusyLoadingVisible = false;
+    }
+}
+
+function cancelRefineJob() {
+    if (pendingRefineJob) {
+        pendingRefineJob.cancelled = true;
+        if (pendingRefineJob.rafId) cancelAnimationFrame(pendingRefineJob.rafId);
+        if (pendingRefineJob.idleId) {
+            if (typeof cancelIdleCallback === "function") cancelIdleCallback(pendingRefineJob.idleId);
+            else clearTimeout(pendingRefineJob.idleId);
+        }
+        pendingRefineJob = null;
+    }
+    clearMapBusyLoadingOverlay();
+}
+
+function scheduleRefineStep(job, fn) {
+    const run = () => {
+        job.idleId = null;
+        if (job.cancelled || job.epoch !== renderEpoch) return;
+        fn();
+    };
+    if (typeof requestIdleCallback === "function") {
+        job.idleId = requestIdleCallback(run, { timeout: 120 });
+    } else {
+        job.idleId = setTimeout(run, 0);
+    }
+}
+
+function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = true, drawMarkers = true } = {}) {
+    drawMapBackground(transform);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (showOcean && oceanCache && hasOceanCache(transform)) {
+        ctx.drawImage(oceanCache, 0, 0);
+    }
+    if (showBorders && countriesCache && hasCountriesCache(transform)) {
+        ctx.drawImage(countriesCache, 0, 0);
+    }
+    drawMapContentFrame(transform);
+    // Graticules/geographic lines expect DPR transform space.
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    if (showGraticules) drawGraticules(transform);
+    if (showGeoLines) drawGeographicLines(transform);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (climateLayerCache) {
+        ctx.drawImage(climateLayerCache, 0, 0);
+    }
+    if (drawLabels && (showGraticules || showGeoLines)) {
+        drawAxisLabels(transform);
+    }
+    if (drawMarkers) {
+        updateHoverCircle();
+        updateSearchMarker();
+    }
+}
+
+function redrawFastPostInteraction() {
+    endInteractionBitmapMode();
+    const transform = makeTransformSnapshot();
+    const { locked, data: lockedData } = getLockState();
+    const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
+    const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
+    initCaches();
+    resizeCaches();
+    drawClimateLayerToCache(transform, lockedType, hoveredType);
+    composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+}
+
+function startRefineJob(epoch) {
+    cancelRefineJob();
+    const job = {
+        epoch,
+        cancelled: false,
+        transform: makeTransformSnapshot(),
+        step: 0,
+        rafId: null,
+        idleId: null
+    };
+    pendingRefineJob = job;
+    scheduleMapBusyLoadingOverlay();
+
+    const runStep = () => {
+        if (job.cancelled || job.epoch !== renderEpoch) return;
+        const transform = job.transform;
+        if (job.step === 0) {
+            ensureBaseLayerCaches(transform, { ocean: true, countries: true });
+            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+        } else {
+            composeFrameFromCaches({ transform, drawLabels: true, drawMarkers: true });
+            pendingRefineJob = null;
+            clearMapBusyLoadingOverlay();
+            return;
+        }
+
+        job.step += 1;
+        job.rafId = requestAnimationFrame(() => {
+            job.rafId = null;
+            scheduleRefineStep(job, runStep);
+        });
+    };
+
+    scheduleRefineStep(job, runStep);
+}
 
 // Redraw only glyphs/points (optimized for zoom/pan interactive performance)
 function redrawGlyphsOnly() {
-    // Clear the entire canvas
-    const b = STATE.mapExtent;
-    const { x, y, k } = STATE.zoomTransform;
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, STATE.width, STATE.height);
-    
-    // Do not render base map, ocean, countries, graticules, etc. Only render symbols
-    // drawMapBackground();
-    // if (showOcean) drawOcean();
-    // if (showBorders) drawCountries();
-    // if (showGraticules) drawGraticules();
-    // if (showGeoLines) drawGeographicLines();
-    baseMapDirty = false;
-    
-    // Cache lock state once for all glyphs
+    if (!isZooming) {
+        endInteractionBitmapMode();
+    }
+    initCaches();
+    resizeCaches();
+    const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
-    
-    // Get hovered state (for glyph mode: apply same effect as lock on hover)
     const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
-    
-    // Draw glyphs/points
-    if (symbolStyle === 'point') {
-        drawPointsBatch();
-    } else {
-        STATE.data.forEach(d => drawGlyph(d, lockedType, hoveredType));
+    drawClimateLayerToCache(transform, lockedType, hoveredType);
+    drawMapBackground();
+    drawMapContentFrame(transform);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (climateLayerCache) {
+        ctx.drawImage(climateLayerCache, 0, 0);
     }
-    
-    // Draw axis labels after symbols so they appear on top
-    if (showGraticules || showGeoLines) {
-        drawAxisLabels();
-    }
-    
-    // Update hover circle and search marker position
-    updateHoverCircle();
-    updateSearchMarker();
 }
 
 // Full redraw: all layers including base map
 function redraw(skipAxisLabels = false) {
-    // Redraw base map (overhead is mostly from axis labels)
-    drawMapBackground();
-    if (showOcean) drawOcean();
-    if (showBorders) drawCountries();
-    if (showGraticules) drawGraticules();
-    if (showGeoLines) drawGeographicLines();
-    baseMapDirty = false;
-    
-    // Cache lock state once for all glyphs
+    cancelRefineJob();
+    endInteractionBitmapMode();
+    const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
-    
-    // Get hovered state (for glyph mode: apply same effect as lock on hover)
     const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
-    
-    // Use optimized batch rendering for point mode, individual rendering for glyph mode
-    if (symbolStyle === 'point') {
-        drawPointsBatch();
-    } else {
-        STATE.data.forEach(d => drawGlyph(d, lockedType, hoveredType));
+    initCaches();
+    resizeCaches();
+    drawClimateLayerToCache(transform, lockedType, hoveredType);
+    ensureBaseLayerCaches(transform, { ocean: true, countries: true });
+    composeFrameFromCaches({ transform, drawLabels: !skipAxisLabels, drawMarkers: true });
+    if (!isZooming && !pendingRefineJob) {
+        clearMapBusyLoadingOverlay();
     }
-    
-    // Draw axis labels after symbols so they appear on top
-    if (!skipAxisLabels && (showGraticules || showGeoLines)) {
-        drawAxisLabels();
-    }
-    
-    // Update hover circle position after zoom/pan
-    updateHoverCircle();
-    updateSearchMarker();
 }
 
 // Redraw map without axis labels for export
 function redrawMapForExport() {
-    drawMapBackground();
-    if (showOcean) drawOcean();
-    if (showBorders) drawCountries();
-    if (showGraticules) drawGraticules();
-    if (showGeoLines) drawGeographicLines();
-    
-    // Cache lock state once for all glyphs
-    const { locked, data: lockedData } = getLockState();
-    const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
-    
-    // Get hovered state (for glyph mode: apply same effect as lock on hover)
-    const hoveredType = hoveredDatum ? hoveredDatum.kg_type : null;
-    
-    // Use optimized batch rendering for point mode, individual rendering for glyph mode
-    if (symbolStyle === 'point') {
-        drawPointsBatch();
-    } else {
-        STATE.data.forEach(d => drawGlyph(d, lockedType, hoveredType));
-    }
-    // Intentionally skip drawAxisLabels() for cleaner export
-    
-    // Update hover circle position after zoom/pan
-    updateHoverCircle();
-    updateSearchMarker();
+    redraw(true);
 }
 
 // Export for use in export dialog
@@ -1045,7 +1493,11 @@ function calcHoverRadius() {
 // Helper: Project datum to screen coordinates
 function projectDatumToScreen(datum) {
     if (!STATE.projection || !datum) return null;
-    const [x0, y0] = STATE.projection([datum.lon, datum.lat]);
+    let x0 = datum.px;
+    let y0 = datum.py;
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) {
+        [x0, y0] = STATE.projection([datum.lon, datum.lat]);
+    }
     return {
         cx: x0 * STATE.zoomTransform.k + STATE.zoomTransform.x,
         cy: y0 * STATE.zoomTransform.k + STATE.zoomTransform.y
@@ -1058,11 +1510,18 @@ function updateHoverCircle() {
     
     const { locked, data: lockedData } = getLockState();
     const datum = locked ? lockedData : hoveredDatum;
-    if (!datum) return;
+    if (!datum) {
+        hoverLayer.style("display", "none");
+        return;
+    }
     
     const pos = projectDatumToScreen(datum);
-    if (!pos) return;
+    if (!pos) {
+        hoverLayer.style("display", "none");
+        return;
+    }
     const { outerR } = calcHoverRadius();
+    hoverLayer.style("display", null);
     
     hoverCircle
         .interrupt()
@@ -1073,7 +1532,10 @@ function updateHoverCircle() {
 }
 
 function updateSearchMarker() {
-    if (!STATE.projection || !searchMarker || !searchPoint) return;
+    if (!STATE.projection || !searchMarker || !searchPoint) {
+        searchLayer.style("display", "none");
+        return;
+    }
 
     // searchPoint: the searched location (search result location)
     const [sx0, sy0] = STATE.projection([searchPoint.lon, searchPoint.lat]);
@@ -1102,11 +1564,8 @@ function updateSearchMarker() {
     
     const symbolRadius = 6;  // symbol is 12x12, so radius is 6
     const gap = 5;  // fixed gap between text block edge and search point symbol edge
-    const estimatedWidth = Math.max(...lines.map(line => line.length * 6.5));
     const fontSize = 12;
     const lineHeight = 1.2;
-    // Total text block height: first line height + (n-1) * line spacing
-    const totalTextHeight = fontSize + (lines.length - 1) * fontSize * lineHeight;
     
     // Determine label position: place near search point, avoid climate data point
     // dx, dy: climate point relative to search point
@@ -1167,48 +1626,69 @@ function updateSearchMarker() {
     });
 }
 
-// Attach zoom handlers with optimized rendering during interactive zoom/pan
-// During zoom/pan: only redraw glyphs (fast path)
-// After zoom/pan ends: full redraw including base map
+// Attach zoom handlers with bitmap-fast interaction and staged refine after interaction ends.
 let zoomRaf = null;
+let zoomEndRaf = null;
 let isZooming = false;
 let scheduleFullRedraw = false;
 
 const zoomBehavior = d3.zoom()
     .scaleExtent([1, 20])
     .on("zoom", e => {
+        cancelRefineJob();
+        if (zoomEndRaf) {
+            cancelAnimationFrame(zoomEndRaf);
+            zoomEndRaf = null;
+        }
         STATE.zoomTransform = e.transform;
         isZooming = true;
         scheduleFullRedraw = true;
-        baseMapDirty = true;  // Mark base map for update after zoom
+
+        if (symbolStyle === "glyph" && !isInteractingBitmapMode) {
+            beginInteractionBitmapMode();
+        }
+        hoverLayer.style("display", "none");
+        searchLayer.style("display", "none");
         
         if (zoomRaf) return;
         zoomRaf = requestAnimationFrame(() => {
             zoomRaf = null;
             constrainTransform();
-            // During active zoom: only redraw glyphs (fast path)
+            // During active zoom in glyph mode: transform snapshot bitmap for smooth interaction
+            if (symbolStyle === "glyph" && isInteractingBitmapMode && drawInteractionBitmap()) {
+                return;
+            }
+            // Point mode fallback keeps lightweight redraw behavior
             redrawGlyphsOnly();
         });
     })
     .on("end", () => {
-        // After zoom ends: do a full redraw to ensure everything is correct
+        // After zoom ends: fast redraw first, then progressively refine base layers.
         isZooming = false;
+        endInteractionBitmapMode();
         if (scheduleFullRedraw) {
             scheduleFullRedraw = false;
-            if (!zoomRaf) {
-                zoomRaf = requestAnimationFrame(() => {
-                    zoomRaf = null;
-                    redraw();
-                });
+            if (zoomEndRaf) {
+                cancelAnimationFrame(zoomEndRaf);
+                zoomEndRaf = null;
             }
+            zoomEndRaf = requestAnimationFrame(() => {
+                zoomEndRaf = null;
+                if (isZooming) return;
+                constrainTransform();
+                renderEpoch += 1;
+                redrawFastPostInteraction();
+                startRefineJob(renderEpoch);
+            });
+        } else if (!pendingRefineJob) {
+            clearMapBusyLoadingOverlay();
         }
     });
 
 overlay.call(zoomBehavior);
 
 
-// Hover and interaction handling: find nearest point and dispatch hover/select events via dispatcher
-// Convert screen coordinates to lon/lat, find nearest point, and dispatch events via dispatcher
+// Hover and interaction handling
 const overlayNode = overlay.node();
 
 // SVG highlight elements (cheap to update on hover)
@@ -1235,9 +1715,6 @@ const searchMarkerLabel = searchLayer.append('text')
     .attr('stroke-width', 3)
     .attr('stroke-linejoin', 'round')
     .attr('paint-order', 'stroke fill');
-
-// Track last mouse position (screen relative to overlay) so we can re-evaluate hover on unlock
-let lastMousePos = null;
 
 // Default hover circle styling
 hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 3).attr('opacity', 0.95);
@@ -1308,11 +1785,12 @@ let hoverRedrawScheduled = false;
 function onMouseMove(e) {
     if (!STATE.projection) return;
 
-    // Compute and cache last mouse position (overlay-relative pixels)
     const rect = overlay.node().getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    lastMousePos = { x: sx, y: sy };
+
+    // Skip hover lookup and redraw during active zoom/pan to avoid frame contention.
+    if (isZooming || isInteractingBitmapMode) return;
 
     // If panel is locked, keep highlight frozen
     const { locked } = getLockState();
@@ -1471,9 +1949,6 @@ function jumpToLocation(lat, lon, label) {
 
     const newTransform = d3.zoomIdentity.translate(newX, newY).scale(targetZoom);
     
-    // Mark base map as dirty before starting transition so it gets redrawn during animation
-    baseMapDirty = true;
-
     const lockNearest = () => {
         let nearest = null;
         let minDist = Infinity;
@@ -1517,8 +1992,6 @@ function jumpToLocation(lat, lon, label) {
                 cancelAnimationFrame(zoomRaf);
                 zoomRaf = null;
             }
-            // Force complete redraw after transition
-            baseMapDirty = true;
             isZooming = false;
             scheduleFullRedraw = false;
             redraw();
@@ -1631,7 +2104,6 @@ function setupToggleControl(element, onToggle) {
     if (element) {
         element.addEventListener('change', (e) => {
             onToggle(e.target.checked);
-            baseMapDirty = true;  // Mark base map for update since layers changed
             redraw();
         });
     }
@@ -1650,12 +2122,15 @@ setupToggleControl(toggleGraticules, (checked) => { showGraticules = checked; })
 setupToggleControl(toggleGeoLines, (checked) => { showGeoLines = checked; });
 
 export async function init() {
+    showLoading("Loading map...");
     resize();
     STATE.data = await loadData();
     COUNTRIES = await loadCountries();
     OCEAN = await loadOcean();
+    buildGlyphRenderCache();
     await new Promise(r => requestAnimationFrame(r));
     updateProjection();
+    updateProjectedDataCache();
     computeSymbolRadius();
     computeMapBounds();
     computeMapExtent();
@@ -1664,7 +2139,7 @@ export async function init() {
     // Initialize caches
     initCaches();
     resizeCaches();
-    baseMapDirty = true;  // Ensure base map is drawn on init
+    resizeInteractionSnapshot();
     redraw();
 
     // Register event listeners after initialization
@@ -1685,7 +2160,6 @@ export async function init() {
         dispatcher.call("select", null, d);
     });
 
-    // data load complete
     hideLoading();
     dispatcher.call("dataLoaded", null, STATE.data);
 }

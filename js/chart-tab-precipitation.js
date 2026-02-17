@@ -513,7 +513,7 @@ export function drawPrecipitationScatter() {
         .attr("font-size", 12)
         .attr("font-weight", 600)
         .attr("fill", "#333")
-        .text("Month 1 vs Month 7 Precipitation");
+        .text("Winter (Month 1) vs Summer (Month 7) Precipitation");
 
     // Color function
     function getColor(d) {

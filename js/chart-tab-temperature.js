@@ -484,7 +484,7 @@ export function drawTemperatureScatter() {
         .attr("font-size", 12)
         .attr("font-weight", 600)
         .attr("fill", "#333")
-        .text("Month 1 vs Month 7 Temperature");
+        .text("Winter (Month 1) vs Summer (Month 7) Temperature");
 
     // Color function
     function getColor(d) {
