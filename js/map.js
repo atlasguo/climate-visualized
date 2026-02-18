@@ -10,6 +10,9 @@ const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const overlay = d3.select("#overlay");
 const CANVAS_DPR = Math.max(window.devicePixelRatio || 1, 1);
+const CITY_LABEL_FONT_FAMILY = getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-family")
+    .trim() || "Inter, system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Arial, sans-serif";
 
 // Search box elements
 const searchInput = document.getElementById("search-input");
@@ -20,13 +23,15 @@ const toggleOcean = document.getElementById("toggle-ocean");
 const toggleBorders = document.getElementById("toggle-borders");
 const toggleGraticules = document.getElementById("toggle-graticules");
 const toggleGeoLines = document.getElementById("toggle-geolines");
+const toggleCityLabels = document.getElementById("toggle-city-labels");
+const toggleCountryLabels = document.getElementById("toggle-country-labels");
 
 /* =========================================================
    Global application state (moved to shared module)
    ========================================================= */
 
 import { STATE, dispatcher, adjustColor, tempToR, precipToR, buildQuadtree, findNearestScreen } from "./shared.js";
-import { loadData, loadCountries, loadOcean } from "./data.js";
+import { loadData, loadCountries, loadOcean, loadCityLabels } from "./data.js";
 import { showLoading, hideLoading } from "./loading.js";
 import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
 
@@ -36,12 +41,15 @@ import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
 
 let COUNTRIES = null;
 let OCEAN = null;
+let CITY_LABELS = [];
 
 // Map display toggles
 let showOcean = true;
 let showBorders = true;
 let showGraticules = true;
 let showGeoLines = true;
+let showCityLabels = false;
+let showCountryLabels = false;
 
 // Symbol style mode: 'point' (default) or 'glyph'
 let symbolStyle = 'point';
@@ -68,6 +76,16 @@ let renderEpoch = 0;
 let pendingRefineJob = null;
 let mapBusyLoadingTimer = null;
 let mapBusyLoadingVisible = false;
+const CITY_LABEL_COLOR = "#222222";
+const CITY_LABEL_HALO = "rgba(255, 255, 255, 0.75)";
+const CITY_LABEL_HALO_WIDTH = 2.7;
+const CITY_LABEL_PADDING = 3;
+const CITY_LABEL_OFFSET_X = 0;
+const CITY_LABEL_OFFSET_Y = 0;
+const COUNTRY_LABEL_COLOR = "#666666";
+const COUNTRY_LABEL_HALO = "rgba(255, 255, 255, 0.85)";
+const COUNTRY_LABEL_HALO_WIDTH = 2;
+const COUNTRY_LABEL_PADDING = 3;
 const OCEAN_GLOW_LAYERS = [
     { width: 0, alpha: 0.52 },
     { width: 25, alpha: 0.3 },
@@ -164,6 +182,24 @@ function computeProjectedFeatureBounds() {
     } else {
         OCEAN._projBBox = computeProjectedBBoxForObject(OCEAN, path);
     }
+}
+
+function updateCountryLabelPoints() {
+    if (!COUNTRIES?.features || !STATE.projection) return;
+    COUNTRIES.features.forEach(feature => {
+        if (feature._labelPoint && feature._labelPointVersion === projectedCacheVersion) return;
+        const props = feature.properties || {};
+        const labelLon = Number.isFinite(+props.LABEL_X) ? +props.LABEL_X : null;
+        const labelLat = Number.isFinite(+props.LABEL_Y) ? +props.LABEL_Y : null;
+        const lonLat = (labelLon !== null && labelLat !== null) ? [labelLon, labelLat] : d3.geoCentroid(feature);
+        const projected = Array.isArray(lonLat) ? STATE.projection(lonLat) : null;
+        if (Array.isArray(projected) && projected.every(Number.isFinite)) {
+            feature._labelPoint = projected;
+        } else {
+            feature._labelPoint = null;
+        }
+        feature._labelPointVersion = projectedCacheVersion;
+    });
 }
 
 function getVisibleOceanFeatures(bounds, bufferProjected = 0) {
@@ -637,6 +673,8 @@ function resize() {
         endInteractionBitmapMode();
         updateProjection();
         updateProjectedDataCache();
+        updateProjectedCityLabelCache();
+        updateCountryLabelPoints();
         computeSymbolRadius();
         computeMapBounds();
         computeMapExtent();
@@ -681,6 +719,16 @@ function updateProjection() {
 function updateProjectedDataCache() {
     if (!STATE.projection || !STATE.data) return;
     STATE.data.forEach(d => {
+        const [px, py] = STATE.projection([d.lon, d.lat]);
+        d.px = px;
+        d.py = py;
+        d.projectedCacheVersion = projectedCacheVersion;
+    });
+}
+
+function updateProjectedCityLabelCache() {
+    if (!STATE.projection || !CITY_LABELS?.length) return;
+    CITY_LABELS.forEach(d => {
         const [px, py] = STATE.projection([d.lon, d.lat]);
         d.px = px;
         d.py = py;
@@ -1008,6 +1056,255 @@ function drawGeographicLinesViewport(transform = STATE.zoomTransform, bounds = g
     });
 
     ctx.restore();
+}
+
+function getLabelRankLimit(k) {
+    if (k < 0.9) return 1;
+    if (k < 1.3) return 2;
+    if (k < 2.0) return 3;
+    if (k < 3.5) return 5;
+    return 7;
+}
+
+function getCityLabelFontSize(rank, k) {
+    const size = 9;
+    const scale = Math.max(0.9, Math.min(1.1, Math.pow(k, 0.08)));
+    return size * scale;
+}
+
+function getPopulationThreshold(k) {
+    if (k < 0.9) return 12000000;
+    if (k < 1.3) return 6000000;
+    if (k < 2.0) return 2000000;
+    if (k < 3.5) return 800000;
+    return 0;
+}
+
+function drawCityLabels(transform = STATE.zoomTransform, collision = null) {
+    if (!showCityLabels || !CITY_LABELS?.length || !STATE.projection) return;
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    const { x, y, k } = transform;
+    const rankLimit = getLabelRankLimit(k);
+    const popThreshold = getPopulationThreshold(k);
+    const viewportPadding = 20;
+    const viewportLeft = -viewportPadding;
+    const viewportRight = STATE.width + viewportPadding;
+    const viewportTop = -viewportPadding;
+    const viewportBottom = STATE.height + viewportPadding;
+
+    const visible = CITY_LABELS.filter(d => {
+        if (!Number.isFinite(d.px) || !Number.isFinite(d.py)) return false;
+        const sx = d.px * k + x;
+        const sy = d.py * k + y;
+        if (sx < viewportLeft || sx > viewportRight || sy < viewportTop || sy > viewportBottom) return false;
+        const rank = Number.isFinite(+d.labelrank) ? +d.labelrank : (Number.isFinite(+d.scalerank) ? +d.scalerank : 10);
+        const isCapital = d.adm0cap === 1 || d.adm0cap === "1" || (d.featurecla || "").toLowerCase().includes("admin-0 capital");
+        const isMega = d.megacity === 1 || d.megacity === "1" || d.worldcity === 1 || d.worldcity === "1";
+        const pop = Number.isFinite(+d.pop) ? +d.pop : 0;
+        if (isCapital || isMega) return true;
+        if (popThreshold > 0 && pop < popThreshold) return false;
+        return rank <= rankLimit;
+    }).map(d => {
+        const rank = Number.isFinite(+d.labelrank) ? +d.labelrank : (Number.isFinite(+d.scalerank) ? +d.scalerank : 10);
+        const isCapital = d.adm0cap === 1 || d.adm0cap === "1" || (d.featurecla || "").toLowerCase().includes("admin-0 capital");
+        const pop = Number.isFinite(+d.pop) ? +d.pop : 0;
+        return { ...d, _rank: rank, _isCapital: isCapital, _pop: pop };
+    });
+
+    visible.sort((a, b) => {
+        if (a._isCapital !== b._isCapital) return a._isCapital ? -1 : 1;
+        if (b._pop !== a._pop) return b._pop - a._pop;
+        if (a._rank !== b._rank) return a._rank - b._rank;
+        return 0;
+    });
+
+    const gridSize = collision?.size ?? 140;
+    const grid = collision?.grid ?? new Map();
+    const addToGrid = (rect) => {
+        const x0 = Math.floor(rect.x / gridSize);
+        const x1 = Math.floor((rect.x + rect.w) / gridSize);
+        const y0 = Math.floor(rect.y / gridSize);
+        const y1 = Math.floor((rect.y + rect.h) / gridSize);
+        for (let gx = x0; gx <= x1; gx++) {
+            for (let gy = y0; gy <= y1; gy++) {
+                const key = `${gx},${gy}`;
+                if (!grid.has(key)) grid.set(key, []);
+                grid.get(key).push(rect);
+            }
+        }
+    };
+    const collides = (rect) => {
+        const x0 = Math.floor(rect.x / gridSize);
+        const x1 = Math.floor((rect.x + rect.w) / gridSize);
+        const y0 = Math.floor(rect.y / gridSize);
+        const y1 = Math.floor((rect.y + rect.h) / gridSize);
+        for (let gx = x0; gx <= x1; gx++) {
+            for (let gy = y0; gy <= y1; gy++) {
+                const key = `${gx},${gy}`;
+                const bucket = grid.get(key);
+                if (!bucket) continue;
+                for (const other of bucket) {
+                    if (
+                        rect.x < other.x + other.w &&
+                        rect.x + rect.w > other.x &&
+                        rect.y < other.y + other.h &&
+                        rect.y + rect.h > other.y
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.strokeStyle = CITY_LABEL_HALO;
+    ctx.lineWidth = CITY_LABEL_HALO_WIDTH;
+    ctx.lineJoin = "round";
+
+    for (const d of visible) {
+        const fontSize = getCityLabelFontSize(d._rank, k);
+        ctx.font = `${fontSize}px ${CITY_LABEL_FONT_FAMILY}`;
+        const label = d.name;
+        if (!label) continue;
+        const isCapital = d._isCapital;
+        ctx.fillStyle = isCapital ? "#111111" : "#666666";
+        const sx = d.px * k + x;
+        const sy = d.py * k + y;
+        const textWidth = ctx.measureText(label).width;
+        const rect = {
+            x: sx - (textWidth / 2) + CITY_LABEL_OFFSET_X - CITY_LABEL_PADDING,
+            y: sy - (fontSize / 2) + CITY_LABEL_OFFSET_Y - CITY_LABEL_PADDING,
+            w: textWidth + CITY_LABEL_PADDING * 2,
+            h: fontSize + CITY_LABEL_PADDING * 2
+        };
+        if (rect.x < viewportLeft || rect.x + rect.w > viewportRight ||
+            rect.y < viewportTop || rect.y + rect.h > viewportBottom) {
+            continue;
+        }
+        if (collides(rect)) continue;
+        addToGrid(rect);
+        const textX = sx + CITY_LABEL_OFFSET_X;
+        const textY = sy + CITY_LABEL_OFFSET_Y;
+        ctx.strokeText(label, textX, textY);
+        ctx.fillText(label, textX, textY);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+function getCountryLabelRankLimit(k) {
+    if (k < 0.9) return 2;
+    if (k < 1.3) return 2;
+    if (k < 2.0) return 3;
+    return 5;
+}
+
+function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
+    if (!showCountryLabels || !COUNTRIES?.features || !STATE.projection) return;
+    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    updateCountryLabelPoints();
+
+    const { x, y, k } = transform;
+    const rankLimit = getCountryLabelRankLimit(k);
+    const viewportPadding = 20;
+    const viewportLeft = -viewportPadding;
+    const viewportRight = STATE.width + viewportPadding;
+    const viewportTop = -viewportPadding;
+    const viewportBottom = STATE.height + viewportPadding;
+
+    const visible = COUNTRIES.features.map(f => {
+        const props = f.properties || {};
+        const rank = Number.isFinite(+props.LABELRANK) ? +props.LABELRANK
+            : (Number.isFinite(+props.scalerank) ? +props.scalerank : 10);
+        const pop = Number.isFinite(+props.POP_EST) ? +props.POP_EST : 0;
+        const label = props.ADMIN || props.NAME || props.SOVEREIGNT || "";
+        return { f, label, rank, pop };
+    }).filter(d => {
+        if (!d.label || !Array.isArray(d.f._labelPoint)) return false;
+        if (d.rank > rankLimit) return false;
+        const [px, py] = d.f._labelPoint;
+        if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+        const sx = px * k + x;
+        const sy = py * k + y;
+        if (sx < viewportLeft || sx > viewportRight || sy < viewportTop || sy > viewportBottom) return false;
+        return true;
+    });
+
+    visible.sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return b.pop - a.pop;
+    });
+
+    const gridSize = collision?.size ?? 180;
+    const grid = collision?.grid ?? new Map();
+    const addToGrid = (rect) => {
+        const x0 = Math.floor(rect.x / gridSize);
+        const x1 = Math.floor((rect.x + rect.w) / gridSize);
+        const y0 = Math.floor(rect.y / gridSize);
+        const y1 = Math.floor((rect.y + rect.h) / gridSize);
+        for (let gx = x0; gx <= x1; gx++) {
+            for (let gy = y0; gy <= y1; gy++) {
+                const key = `${gx},${gy}`;
+                if (!grid.has(key)) grid.set(key, []);
+                grid.get(key).push(rect);
+            }
+        }
+    };
+    const collides = (rect) => {
+        const x0 = Math.floor(rect.x / gridSize);
+        const x1 = Math.floor((rect.x + rect.w) / gridSize);
+        const y0 = Math.floor(rect.y / gridSize);
+        const y1 = Math.floor((rect.y + rect.h) / gridSize);
+        for (let gx = x0; gx <= x1; gx++) {
+            for (let gy = y0; gy <= y1; gy++) {
+                const key = `${gx},${gy}`;
+                const bucket = grid.get(key);
+                if (!bucket) continue;
+                for (const other of bucket) {
+                    if (
+                        rect.x < other.x + other.w &&
+                        rect.x + rect.w > other.x &&
+                        rect.y < other.y + other.h &&
+                        rect.y + rect.h > other.y
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = COUNTRY_LABEL_COLOR;
+    ctx.strokeStyle = COUNTRY_LABEL_HALO;
+    ctx.lineWidth = COUNTRY_LABEL_HALO_WIDTH;
+    ctx.lineJoin = "round";
+
+    const fontSize = 10 * Math.max(0.9, Math.min(1.1, Math.pow(k, 0.1)));
+    ctx.font = `${fontSize}px ${CITY_LABEL_FONT_FAMILY}`;
+
+    for (const d of visible) {
+        const [px, py] = d.f._labelPoint;
+        const sx = px * k + x;
+        const sy = py * k + y;
+        const labelText = d.label.toUpperCase();
+        const textWidth = ctx.measureText(labelText).width;
+        const rect = {
+            x: sx - (textWidth / 2) - COUNTRY_LABEL_PADDING,
+            y: sy - (fontSize / 2) - COUNTRY_LABEL_PADDING,
+            w: textWidth + COUNTRY_LABEL_PADDING * 2,
+            h: fontSize + COUNTRY_LABEL_PADDING * 2
+        };
+        if (collides(rect)) continue;
+        addToGrid(rect);
+        ctx.strokeText(labelText, sx, sy);
+        ctx.fillText(labelText, sx, sy);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 /* =========================================================
@@ -1377,6 +1674,9 @@ function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = 
     if (climateLayerCache) {
         ctx.drawImage(climateLayerCache, 0, 0);
     }
+    const labelCollision = (showCityLabels || showCountryLabels) ? { grid: new Map(), size: 160 } : null;
+    drawCountryLabels(transform, labelCollision);
+    drawCityLabels(transform, labelCollision);
     if (drawLabels && (showGraticules || showGeoLines)) {
         drawAxisLabels(transform);
     }
@@ -2120,6 +2420,8 @@ setupToggleControl(toggleBorders, (checked) => {
 });
 setupToggleControl(toggleGraticules, (checked) => { showGraticules = checked; });
 setupToggleControl(toggleGeoLines, (checked) => { showGeoLines = checked; });
+setupToggleControl(toggleCityLabels, (checked) => { showCityLabels = checked; });
+setupToggleControl(toggleCountryLabels, (checked) => { showCountryLabels = checked; });
 
 export async function init() {
     showLoading("Loading map...");
@@ -2127,10 +2429,12 @@ export async function init() {
     STATE.data = await loadData();
     COUNTRIES = await loadCountries();
     OCEAN = await loadOcean();
+    CITY_LABELS = await loadCityLabels();
     buildGlyphRenderCache();
     await new Promise(r => requestAnimationFrame(r));
     updateProjection();
     updateProjectedDataCache();
+    updateProjectedCityLabelCache();
     computeSymbolRadius();
     computeMapBounds();
     computeMapExtent();

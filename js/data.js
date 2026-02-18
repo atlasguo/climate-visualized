@@ -46,3 +46,46 @@ export async function loadCountries() {
 export async function loadOcean() {
     return await d3.json("data/ocean.json");
 }
+
+// Load Natural Earth populated places (10m), normalize to simple label array
+export async function loadCityLabels() {
+    try {
+        const raw = await d3.json("data/ne_populated_places_50m.json");
+        if (!raw) return [];
+        if (Array.isArray(raw)) {
+            return raw.map(d => ({
+                lon: +d.lon,
+                lat: +d.lat,
+                name: d.name || d.NAME || d.NAMEASCII || "",
+                labelrank: d.labelrank ?? d.LABELRANK,
+                scalerank: d.scalerank ?? d.SCALERANK,
+                pop: d.pop ?? d.POP_MAX ?? 0,
+                featurecla: d.featurecla ?? d.FEATURECLA,
+                adm0cap: d.adm0cap ?? d.ADM0CAP,
+                megacity: d.megacity ?? d.MEGACITY,
+                worldcity: d.worldcity ?? d.WORLDCITY
+            })).filter(d => Number.isFinite(d.lon) && Number.isFinite(d.lat) && d.name);
+        }
+        if (raw.type === "FeatureCollection" && Array.isArray(raw.features)) {
+            return raw.features.map(f => {
+                const props = f.properties || {};
+                const coords = f.geometry?.coordinates || [];
+                return {
+                    lon: +coords[0],
+                    lat: +coords[1],
+                    name: props.NAME || props.NAMEASCII || props.name || "",
+                    labelrank: props.LABELRANK ?? props.labelrank,
+                    scalerank: props.SCALERANK ?? props.scalerank,
+                    pop: props.POP_MAX ?? props.pop ?? 0,
+                    featurecla: props.FEATURECLA ?? props.featurecla,
+                    adm0cap: props.ADM0CAP ?? props.adm0cap,
+                    megacity: props.MEGACITY ?? props.megacity,
+                    worldcity: props.WORLDCITY ?? props.worldcity
+                };
+            }).filter(d => Number.isFinite(d.lon) && Number.isFinite(d.lat) && d.name);
+        }
+    } catch (err) {
+        console.warn("City labels not loaded:", err);
+    }
+    return [];
+}
