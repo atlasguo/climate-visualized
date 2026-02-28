@@ -74,6 +74,7 @@ let isInteractingBitmapMode = false;
 let projectedCacheVersion = 0;
 let renderEpoch = 0;
 let pendingRefineJob = null;
+let refineStartDelayTimer = null;
 let mapBusyLoadingTimer = null;
 let mapBusyLoadingVisible = false;
 const CITY_LABEL_COLOR = "#222222";
@@ -93,6 +94,8 @@ const OCEAN_GLOW_LAYERS = [
     { width: 100, alpha: 0.1 }
 ];
 const OCEAN_VIEWPORT_BUFFER_PX = 110;
+const REFINE_START_DELAY_MS = 120;
+const CAN_USE_PATH2D = typeof Path2D === "function";
 
 function getViewportProjectedBounds(transform = STATE.zoomTransform) {
     const k = transform?.k || 1;
@@ -153,13 +156,53 @@ function computeProjectedBBoxForObject(geoObj, path) {
     return { minX, minY, maxX, maxY };
 }
 
+function buildProjectedPath2DForObject(geoObj, path) {
+    if (!CAN_USE_PATH2D || !geoObj || !path) return null;
+    const pathData = path(geoObj);
+    if (typeof pathData !== "string" || !pathData.length) return null;
+    try {
+        return new Path2D(pathData);
+    } catch {
+        return null;
+    }
+}
+
+function cacheProjectedGeometry(geoObj, path) {
+    if (!geoObj) return;
+    geoObj._projBBox = computeProjectedBBoxForObject(geoObj, path);
+    geoObj._projPath2D = buildProjectedPath2DForObject(geoObj, path);
+    geoObj._projPathVersion = projectedCacheVersion;
+}
+
+function getProjectedPath2DForObject(geoObj) {
+    if (!geoObj || geoObj._projPathVersion !== projectedCacheVersion) return null;
+    return geoObj._projPath2D || null;
+}
+
+function buildCombinedProjectedPath2D(features) {
+    if (!CAN_USE_PATH2D || !Array.isArray(features) || !features.length) return null;
+    if (features.length === 1) {
+        return getProjectedPath2DForObject(features[0]);
+    }
+    const combinedPath = new Path2D();
+    if (typeof combinedPath.addPath !== "function") return null;
+    let hasPath = false;
+    for (const feature of features) {
+        const featurePath = getProjectedPath2DForObject(feature);
+        if (!featurePath) return null;
+        combinedPath.addPath(featurePath);
+        hasPath = true;
+    }
+    return hasPath ? combinedPath : null;
+}
+
 function computeProjectedFeatureBounds() {
     if (!STATE.projection) return;
     const path = d3.geoPath(STATE.projection);
 
     if (COUNTRIES?.features) {
         for (const feature of COUNTRIES.features) {
-            feature._projBBox = computeProjectedBBoxForObject(feature, path);
+            cacheProjectedGeometry(feature, path);
         }
     }
 
@@ -167,7 +210,7 @@ function computeProjectedFeatureBounds() {
     if (OCEAN.type === "FeatureCollection" && Array.isArray(OCEAN.features)) {
         let union = null;
         for (const feature of OCEAN.features) {
-            feature._projBBox = computeProjectedBBoxForObject(feature, path);
+            cacheProjectedGeometry(feature, path);
             const b = feature._projBBox;
             if (!b) continue;
             if (!union) union = { ...b };
@@ -180,7 +223,7 @@ function computeProjectedFeatureBounds() {
         }
         OCEAN._projBBox = union;
     } else {
-        OCEAN._projBBox = computeProjectedBBoxForObject(OCEAN, path);
+        cacheProjectedGeometry(OCEAN, path);
     }
 }
 
@@ -360,11 +403,12 @@ function generateOceanCache(transform = STATE.zoomTransform) {
     if (!OCEAN || !oceanCacheCtx) return;
     oceanCacheCtx.clearRect(0, 0, oceanCache.width, oceanCache.height);
     oceanCacheCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-    const path = d3.geoPath(STATE.projection, oceanCacheCtx);
+    let fallbackPath = null;
     const { x, y, k } = transform;
     const viewportBounds = getViewportProjectedBounds(transform);
     const bufferProjected = OCEAN_VIEWPORT_BUFFER_PX / Math.max(k, 1e-6);
     const visibleFeatures = getVisibleOceanFeatures(viewportBounds, bufferProjected);
+    const visiblePath2D = buildCombinedProjectedPath2D(visibleFeatures);
 
     if (!visibleFeatures.length) {
         lastOceanCacheZoom = makeTransformSnapshot(transform);
@@ -375,30 +419,41 @@ function generateOceanCache(transform = STATE.zoomTransform) {
     oceanCacheCtx.translate(x, y);
     oceanCacheCtx.scale(k, k);
 
-    oceanCacheCtx.beginPath();
-    for (const feature of visibleFeatures) {
-        path(feature);
-    }
-    oceanCacheCtx.fillStyle = "#e2f4fc";
-    oceanCacheCtx.fill("evenodd");
+    if (visiblePath2D) {
+        oceanCacheCtx.fillStyle = "#e2f4fc";
+        oceanCacheCtx.fill(visiblePath2D, "evenodd");
 
-    oceanCacheCtx.beginPath();
-    for (const feature of visibleFeatures) {
-        path(feature);
-    }
-    oceanCacheCtx.clip("evenodd");
-
-    for (const layer of OCEAN_GLOW_LAYERS) {
+        oceanCacheCtx.save();
+        oceanCacheCtx.clip(visiblePath2D, "evenodd");
+        for (const layer of OCEAN_GLOW_LAYERS) {
+            const glowColor = layer.color || "250, 252, 255";
+            oceanCacheCtx.strokeStyle = `rgba(${glowColor}, ${layer.alpha})`;
+            oceanCacheCtx.lineWidth = layer.width / k;
+            oceanCacheCtx.lineCap = "round";
+            oceanCacheCtx.lineJoin = "round";
+            oceanCacheCtx.stroke(visiblePath2D);
+        }
+        oceanCacheCtx.restore();
+    } else {
+        fallbackPath = d3.geoPath(STATE.projection, oceanCacheCtx);
         oceanCacheCtx.beginPath();
         for (const feature of visibleFeatures) {
-            path(feature);
+            fallbackPath(feature);
         }
-        const glowColor = layer.color || "250, 252, 255";
-        oceanCacheCtx.strokeStyle = `rgba(${glowColor}, ${layer.alpha})`;
-        oceanCacheCtx.lineWidth = layer.width / k;
-        oceanCacheCtx.lineCap = "round";
-        oceanCacheCtx.lineJoin = "round";
-        oceanCacheCtx.stroke();
+        oceanCacheCtx.fillStyle = "#e2f4fc";
+        oceanCacheCtx.fill("evenodd");
+
+        oceanCacheCtx.save();
+        oceanCacheCtx.clip("evenodd");
+        for (const layer of OCEAN_GLOW_LAYERS) {
+            const glowColor = layer.color || "250, 252, 255";
+            oceanCacheCtx.strokeStyle = `rgba(${glowColor}, ${layer.alpha})`;
+            oceanCacheCtx.lineWidth = layer.width / k;
+            oceanCacheCtx.lineCap = "round";
+            oceanCacheCtx.lineJoin = "round";
+            oceanCacheCtx.stroke();
+        }
+        oceanCacheCtx.restore();
     }
     oceanCacheCtx.restore();
 
@@ -412,7 +467,7 @@ function generateCountriesCache(transform = STATE.zoomTransform) {
     countriesCacheCtx.clearRect(0, 0, countriesCache.width, countriesCache.height);
     countriesCacheCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     
-    const path = d3.geoPath(STATE.projection, countriesCacheCtx);
+    let fallbackPath = null;
     const { x, y, k } = transform;
     const b = STATE.mapExtent;
     const viewportBounds = getViewportProjectedBounds(transform);
@@ -443,9 +498,15 @@ function generateCountriesCache(transform = STATE.zoomTransform) {
     // Stroke features one-by-one to avoid collection-level seam joins that can form a rectangle.
     for (const feature of COUNTRIES.features || []) {
         if (!featureIntersectsProjectedBounds(feature, viewportBounds)) continue;
-        countriesCacheCtx.beginPath();
-        path(feature);
-        countriesCacheCtx.stroke();
+        const featurePath = getProjectedPath2DForObject(feature);
+        if (featurePath) {
+            countriesCacheCtx.stroke(featurePath);
+        } else {
+            if (!fallbackPath) fallbackPath = d3.geoPath(STATE.projection, countriesCacheCtx);
+            countriesCacheCtx.beginPath();
+            fallbackPath(feature);
+            countriesCacheCtx.stroke();
+        }
     }
     
     // Reset alpha
@@ -1631,6 +1692,10 @@ function clearMapBusyLoadingOverlay() {
 }
 
 function cancelRefineJob() {
+    if (refineStartDelayTimer) {
+        clearTimeout(refineStartDelayTimer);
+        refineStartDelayTimer = null;
+    }
     if (pendingRefineJob) {
         pendingRefineJob.cancelled = true;
         if (pendingRefineJob.rafId) cancelAnimationFrame(pendingRefineJob.rafId);
@@ -1641,6 +1706,19 @@ function cancelRefineJob() {
         pendingRefineJob = null;
     }
     clearMapBusyLoadingOverlay();
+}
+
+function scheduleRefineJobWithDelay(epoch) {
+    if (refineStartDelayTimer) {
+        clearTimeout(refineStartDelayTimer);
+        refineStartDelayTimer = null;
+    }
+    refineStartDelayTimer = setTimeout(() => {
+        refineStartDelayTimer = null;
+        if (isZooming) return;
+        if (epoch !== renderEpoch) return;
+        startRefineJob(epoch);
+    }, REFINE_START_DELAY_MS);
 }
 
 function scheduleRefineStep(job, fn) {
@@ -1715,7 +1793,10 @@ function startRefineJob(epoch) {
         if (job.cancelled || job.epoch !== renderEpoch) return;
         const transform = job.transform;
         if (job.step === 0) {
-            ensureBaseLayerCaches(transform, { ocean: true, countries: true });
+            ensureBaseLayerCaches(transform, { ocean: true, countries: false });
+            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+        } else if (job.step === 1) {
+            ensureBaseLayerCaches(transform, { ocean: false, countries: true });
             composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
         } else {
             composeFrameFromCaches({ transform, drawLabels: true, drawMarkers: true });
@@ -1977,8 +2058,9 @@ const zoomBehavior = d3.zoom()
                 if (isZooming) return;
                 constrainTransform();
                 renderEpoch += 1;
+                const epoch = renderEpoch;
                 redrawFastPostInteraction();
-                startRefineJob(renderEpoch);
+                scheduleRefineJobWithDelay(epoch);
             });
         } else if (!pendingRefineJob) {
             clearMapBusyLoadingOverlay();
