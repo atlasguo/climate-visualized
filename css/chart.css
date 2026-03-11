@@ -302,6 +302,10 @@
     margin-top: 0;
 }
 
+#shared-panel-metadata {
+    flex-shrink: 0;
+}
+
 .climate-stats {
     margin: 0;
     padding: 0;
@@ -413,4 +417,9 @@
 #app[data-layout="mobile"] .panel-metadata {
     margin-top: 10px;
     padding-bottom: 6px;
+}
+
+#app[data-layout="mobile"] #shared-panel-metadata {
+    margin-top: 14px;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
 }

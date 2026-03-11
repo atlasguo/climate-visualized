@@ -1,15 +1,23 @@
 # Climate Visualized
 
-Interactive global visualization of the Köppen climate classification.
+Interactive global visualization of the Koppen-Geiger climate classification.
 
-Rendered on HTML Canvas with an SVG overlay for interaction (D3). Climate glyphs encode monthly temperature and precipitation, with linked charts shown on hover.
+The project combines an HTML Canvas map renderer with an SVG interaction layer powered by D3.js. It supports point and climate glyph views, linked charts, responsive layouts, and export tools for both charts and the map.
 
-## Data
+## Project links
 
-- Montly temperature, precipitation, and Köppen–Geiger climate classification (Beck et al., 2018)
-- City, Country, and ocean (Natural Earth 1:50m)
+- About this map: <https://cartoguophy.com/maps/climate_visualized.html>
+- Poster version: <https://cartoguophy.com/maps/koppen.html>
+- Demo video: <https://www.youtube.com/watch?v=45v7BfYmoEM>
 
-## Author
+## Data sources
 
-Map by Atlas Guo (2026)
-https://CartoGuophy.com
+- Beck et al. (2018): monthly temperature, precipitation, and Koppen-Geiger climate classification
+  <https://www.nature.com/articles/sdata2018214>
+- Natural Earth: country, ocean, and label reference data
+  <https://www.naturalearthdata.com/>
+
+## Credits
+
+Design by Atlas Guo (2026)
+© CartoGuophy: <https://cartoguophy.com/>

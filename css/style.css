@@ -838,6 +838,14 @@ svg text {
     overflow: visible;
 }
 
+#app[data-layout="mobile"] .tab-panels {
+    flex: 0 0 auto;
+}
+
+#app[data-layout="mobile"] .tab-panel.active {
+    flex: 0 0 auto;
+}
+
 #app[data-layout="mobile"] .panel-tabs {
     margin-top: 4px;
 }

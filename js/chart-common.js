@@ -330,7 +330,8 @@ export function getAvailableChartHeight() {
 
     const header = panelBody.querySelector(".panel-header");
     const headerHeight = header ? header.getBoundingClientRect().height : 0;
-    const metadata = panelBody.querySelector(".panel-metadata");
+    const metadata = panelBody.querySelector(".panel-metadata")
+        || panelBody.closest(".panel-scroll")?.querySelector("#shared-panel-metadata");
     const metadataHeight = metadata ? metadata.getBoundingClientRect().height : 0;
     const spacing = isMobileLayout() ? 36 : 50;
 
