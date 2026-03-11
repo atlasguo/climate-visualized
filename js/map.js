@@ -106,6 +106,9 @@ const MIN_GLYPH_RENDER_RADIUS = 0.35;
 const MIN_HOVER_HIT_RADIUS_PX = 10;
 const MIN_TOUCH_HIT_RADIUS_PX = 16;
 const MIN_HOVER_CIRCLE_RADIUS_PX = 4;
+const GLYPH_LINE_WIDTH_RATIO = 0.07;
+const GLYPH_LINE_WIDTH_MIN_PX = 0.1;
+const GLYPH_LINE_WIDTH_MAX_PX = 1.1;
 const MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX = 18;
 const MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX = 24;
 const MOBILE_LOCK_FOCUS_SCALE_CANDIDATES = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
@@ -871,6 +874,14 @@ function getInteractionHitRadius(transform = STATE.zoomTransform) {
     return Math.max(minimumRadius, getVisualHitRadius(transform));
 }
 
+function getGlyphLineWidth(baseRadius) {
+    const safeBaseRadius = Number.isFinite(baseRadius) ? baseRadius : 0;
+    return Math.min(
+        GLYPH_LINE_WIDTH_MAX_PX,
+        Math.max(GLYPH_LINE_WIDTH_MIN_PX, safeBaseRadius * GLYPH_LINE_WIDTH_RATIO)
+    );
+}
+
 /* =========================================================
    Symbol radius estimation
    Based on median nearest-neighbor distance
@@ -1474,6 +1485,7 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
 
     const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * k;
     const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
+    const glyphLineWidth = getGlyphLineWidth(R_BASE);
     const tempR12 = d.tempR12 || d.t.map(v => tempToR(v));
     const precipR12 = d.precipR12 || d.p.map(v => precipToR(v));
     const precipFill = d.glyphPrecipFill || adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
@@ -1514,7 +1526,7 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
     drawCtx.closePath();
     drawCtx.strokeStyle = tempStroke;
     drawCtx.globalAlpha = TEMP_LINE_ALPHA * glyphAlpha;
-    drawCtx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
+    drawCtx.lineWidth = glyphLineWidth;
     drawCtx.stroke();
 
     // Jan line
@@ -1522,7 +1534,7 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
     drawCtx.beginPath();
     drawCtx.moveTo(0, 0);
     drawCtx.lineTo(0, -janR);
-    drawCtx.lineWidth = TEMP_LINE_WIDTH * DENSITY_FACTOR * k;
+    drawCtx.lineWidth = glyphLineWidth;
     drawCtx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
     drawCtx.stroke();
 
