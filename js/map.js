@@ -109,6 +109,13 @@ const MIN_HOVER_CIRCLE_RADIUS_PX = 4;
 const GLYPH_LINE_WIDTH_RATIO = 0.07;
 const GLYPH_LINE_WIDTH_MIN_PX = 0.1;
 const GLYPH_LINE_WIDTH_MAX_PX = 1.1;
+const HOVER_RING_CORE_WIDTH_MIN = 2.4;
+const HOVER_RING_CORE_WIDTH_MAX = 3.6;
+const HOVER_RING_GLOW_WIDTH_MULTIPLIER = 2.8;
+const HOVER_RING_SHADOW_WIDTH_MULTIPLIER = 2.2;
+const HOVER_RING_GLOW_OPACITY = 0.34;
+const HOVER_RING_SHADOW_OPACITY = 0.26;
+const HOVER_RING_SHADOW_OFFSET_Y = 1.5;
 const MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX = 18;
 const MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX = 24;
 const MOBILE_LOCK_FOCUS_SCALE_CANDIDATES = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
@@ -880,6 +887,23 @@ function getGlyphLineWidth(baseRadius) {
         GLYPH_LINE_WIDTH_MAX_PX,
         Math.max(GLYPH_LINE_WIDTH_MIN_PX, safeBaseRadius * GLYPH_LINE_WIDTH_RATIO)
     );
+}
+
+function getCurrentMaxZoomScale() {
+    return isMobileLayout() ? 54 : 20;
+}
+
+function getHoverStrokeWidths(radius) {
+    const safeRadius = Number.isFinite(radius) ? radius : 0;
+    const coreWidth = Math.min(
+        HOVER_RING_CORE_WIDTH_MAX,
+        Math.max(HOVER_RING_CORE_WIDTH_MIN, safeRadius * 0.14)
+    );
+    return {
+        coreWidth,
+        glowWidth: coreWidth * HOVER_RING_GLOW_WIDTH_MULTIPLIER,
+        shadowWidth: coreWidth * HOVER_RING_SHADOW_WIDTH_MULTIPLIER
+    };
 }
 
 /* =========================================================
@@ -2040,6 +2064,7 @@ function isPointComfortablyVisibleInMobileViewport(screenX, screenY, topSafe, vi
 
 function getMinimumScaleForFocusTarget(x0, y0, targetX, targetY) {
     const b = STATE.mapBounds;
+    const maxZoomScale = getCurrentMaxZoomScale();
     if (!b || !Number.isFinite(x0) || !Number.isFinite(y0)) {
         return MIN_ZOOM_SCALE;
     }
@@ -2050,10 +2075,10 @@ function getMinimumScaleForFocusTarget(x0, y0, targetX, targetY) {
     const topCapacity = y0 - b.minY + overscrollYBase;
     const bottomCapacity = b.maxY - y0 + overscrollYBase;
 
-    const minScaleLeft = leftCapacity > 0 ? targetX / leftCapacity : MAX_ZOOM_SCALE;
-    const minScaleRight = rightCapacity > 0 ? (STATE.width - targetX) / rightCapacity : MAX_ZOOM_SCALE;
-    const minScaleTop = topCapacity > 0 ? targetY / topCapacity : MAX_ZOOM_SCALE;
-    const minScaleBottom = bottomCapacity > 0 ? (STATE.height - targetY) / bottomCapacity : MAX_ZOOM_SCALE;
+    const minScaleLeft = leftCapacity > 0 ? targetX / leftCapacity : maxZoomScale;
+    const minScaleRight = rightCapacity > 0 ? (STATE.width - targetX) / rightCapacity : maxZoomScale;
+    const minScaleTop = topCapacity > 0 ? targetY / topCapacity : maxZoomScale;
+    const minScaleBottom = bottomCapacity > 0 ? (STATE.height - targetY) / bottomCapacity : maxZoomScale;
 
     const minimumScale = Math.max(
         MIN_ZOOM_SCALE,
@@ -2063,8 +2088,8 @@ function getMinimumScaleForFocusTarget(x0, y0, targetX, targetY) {
         minScaleBottom
     );
     return Number.isFinite(minimumScale)
-        ? Math.min(MAX_ZOOM_SCALE, minimumScale)
-        : MAX_ZOOM_SCALE;
+        ? Math.min(maxZoomScale, minimumScale)
+        : maxZoomScale;
 }
 
 function buildConstrainedDatumFocusTransform(x0, y0, scale, targetX, targetY) {
@@ -2081,26 +2106,27 @@ function buildConstrainedDatumFocusTransform(x0, y0, scale, targetX, targetY) {
 
 function findMobileLockFocusTransform(x0, y0, targetX, targetY, topSafe, visibleBottom) {
     const currentScale = Math.max(STATE.zoomTransform.k || MIN_ZOOM_SCALE, MIN_ZOOM_SCALE);
+    const maxZoomScale = getCurrentMaxZoomScale();
     const minimumFocusScale = getMinimumScaleForFocusTarget(x0, y0, targetX, targetY);
     const candidateScales = new Set([
         currentScale,
         homeZoomTransform?.k || MIN_ZOOM_SCALE,
         minimumFocusScale,
-        Math.min(MAX_ZOOM_SCALE, minimumFocusScale * 1.05)
+        Math.min(maxZoomScale, minimumFocusScale * 1.05)
     ]);
 
     MOBILE_LOCK_FOCUS_SCALE_CANDIDATES.forEach(scale => {
-        if (scale >= currentScale && scale <= MAX_ZOOM_SCALE) {
+        if (scale >= currentScale && scale <= maxZoomScale) {
             candidateScales.add(scale);
         }
     });
 
     if (minimumFocusScale > MOBILE_LOCK_FOCUS_SCALE_CANDIDATES[MOBILE_LOCK_FOCUS_SCALE_CANDIDATES.length - 1]) {
-        candidateScales.add(MAX_ZOOM_SCALE);
+        candidateScales.add(maxZoomScale);
     }
 
     const orderedScales = Array.from(candidateScales)
-        .filter(scale => Number.isFinite(scale) && scale >= currentScale && scale <= MAX_ZOOM_SCALE)
+        .filter(scale => Number.isFinite(scale) && scale >= currentScale && scale <= maxZoomScale)
         .sort((a, b) => a - b);
 
     let fallbackTransform = cloneZoomTransform(STATE.zoomTransform);
@@ -2161,31 +2187,68 @@ function scheduleMobileLockFocus(datum) {
     });
 }
 
+function clearHoverHighlight() {
+    hoverShadowCircle.interrupt().attr("r", 0);
+    hoverGlowCircle.interrupt().attr("r", 0);
+    hoverCircle.interrupt().attr("r", 0);
+    hoverLayer.style("display", "none");
+}
+
+function renderHoverHighlight(datum) {
+    if (!datum || !STATE.projection) {
+        clearHoverHighlight();
+        return;
+    }
+
+    const pos = projectDatumToScreen(datum);
+    if (!pos) {
+        clearHoverHighlight();
+        return;
+    }
+
+    const { outerR } = calcHoverRadius();
+    const radius = outerR * 0.75;
+    const ringColor = adjustColor(datum.baseColor, 1, 0.4);
+    const { coreWidth, glowWidth, shadowWidth } = getHoverStrokeWidths(radius);
+
+    hoverLayer.style("display", null);
+
+    hoverShadowCircle
+        .interrupt()
+        .attr("cx", pos.cx)
+        .attr("cy", pos.cy + HOVER_RING_SHADOW_OFFSET_Y)
+        .attr("r", radius)
+        .attr("stroke-width", shadowWidth);
+
+    hoverGlowCircle
+        .interrupt()
+        .attr("cx", pos.cx)
+        .attr("cy", pos.cy)
+        .attr("r", radius)
+        .attr("stroke", ringColor)
+        .attr("stroke-width", glowWidth);
+
+    hoverCircle
+        .interrupt()
+        .attr("cx", pos.cx)
+        .attr("cy", pos.cy)
+        .attr("r", radius)
+        .attr("stroke", ringColor)
+        .attr("stroke-width", coreWidth);
+}
+
 // Update hover circle position based on current transform
 function updateHoverCircle() {
     if (!STATE.projection) return;
-    
+
     const { locked, data: lockedData } = getLockState();
     const datum = locked ? lockedData : hoveredDatum;
     if (!datum) {
-        hoverLayer.style("display", "none");
+        clearHoverHighlight();
         return;
     }
-    
-    const pos = projectDatumToScreen(datum);
-    if (!pos) {
-        hoverLayer.style("display", "none");
-        return;
-    }
-    const { outerR } = calcHoverRadius();
-    hoverLayer.style("display", null);
-    
-    hoverCircle
-        .interrupt()
-        .attr('cx', pos.cx)
-        .attr('cy', pos.cy)
-        .attr('r', outerR * 0.75)
-        .attr('stroke', adjustColor(datum.baseColor, 1, 0.4));
+
+    renderHoverHighlight(datum);
 }
 
 function updateSearchMarker() {
@@ -2289,7 +2352,6 @@ let zoomEndRaf = null;
 let isZooming = false;
 let scheduleFullRedraw = false;
 const MIN_ZOOM_SCALE = 1;
-const MAX_ZOOM_SCALE = 20;
 const TRANSFORM_EPSILON = 1e-6;
 let homeZoomTransform = d3.zoomIdentity;
 
@@ -2316,6 +2378,7 @@ function computeHomeZoomTransform() {
     if (!hasRenderableMapFrame()) {
         return d3.zoomIdentity;
     }
+    const maxZoomScale = getCurrentMaxZoomScale();
 
     const b = getRenderableMapExtent();
     const contentWidth = b.maxX - b.minX;
@@ -2334,7 +2397,7 @@ function computeHomeZoomTransform() {
     const scale = Math.max(
         MIN_ZOOM_SCALE,
         Math.min(
-            MAX_ZOOM_SCALE,
+            maxZoomScale,
             Math.max(visibleWidth / contentWidth, visibleHeight / contentHeight)
         )
     );
@@ -2369,13 +2432,14 @@ function setZoomButtonDisabled(button, disabled) {
 
 function updateZoomControlState(transform = STATE.zoomTransform) {
     const scale = transform?.k ?? MIN_ZOOM_SCALE;
-    setZoomButtonDisabled(zoomInBtn, scale >= MAX_ZOOM_SCALE - TRANSFORM_EPSILON);
+    const maxZoomScale = getCurrentMaxZoomScale();
+    setZoomButtonDisabled(zoomInBtn, scale >= maxZoomScale - TRANSFORM_EPSILON);
     setZoomButtonDisabled(zoomOutBtn, scale <= MIN_ZOOM_SCALE + TRANSFORM_EPSILON);
     setZoomButtonDisabled(zoomResetBtn, isHomeTransform(transform));
 }
 
 const zoomBehavior = d3.zoom()
-    .scaleExtent([MIN_ZOOM_SCALE, MAX_ZOOM_SCALE])
+    .scaleExtent([MIN_ZOOM_SCALE, getCurrentMaxZoomScale()])
     .on("zoom", e => {
         cancelRefineJob();
         if (zoomEndRaf) {
@@ -2439,7 +2503,9 @@ const overlayNode = overlay.node();
 
 // SVG highlight elements (cheap to update on hover)
 const hoverLayer = overlay.append('g').attr('class', 'hover-layer').style('pointer-events', 'none').style('display', 'none');
-const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none').attr('stroke-width', 3);
+const hoverShadowCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
+const hoverGlowCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
+const hoverCircle = hoverLayer.append('circle').attr('r', 0).attr('fill', 'none');
 
 // Search marker elements
 const searchLayer = overlay.append('g').attr('class', 'search-layer').style('pointer-events', 'none').style('display', 'none');
@@ -2463,7 +2529,15 @@ const searchMarkerLabel = searchLayer.append('text')
     .attr('paint-order', 'stroke fill');
 
 // Default hover circle styling
-hoverCircle.attr('stroke', '#ffffff').attr('stroke-width', 3).attr('opacity', 0.95);
+hoverShadowCircle
+    .attr('stroke', 'rgba(12, 20, 28, 0.38)')
+    .attr('opacity', HOVER_RING_SHADOW_OPACITY);
+hoverGlowCircle
+    .attr('stroke', '#ffffff')
+    .attr('opacity', HOVER_RING_GLOW_OPACITY);
+hoverCircle
+    .attr('stroke', '#ffffff')
+    .attr('opacity', 0.97);
 
 let searchMarker = null;
 let searchPoint = null; // Store the search input location for relative positioning
@@ -2474,18 +2548,7 @@ dispatcher.on('lock.map', d => {
     hoveredDatum = d || null;
     scheduleMobileLockFocus(d || null);
 
-    if (d && STATE.projection) {
-        const pos = projectDatumToScreen(d);
-        const { outerR } = calcHoverRadius();
-
-        hoverLayer.style('display', null);
-        hoverCircle
-            .interrupt()
-            .attr('cx', pos.cx)
-            .attr('cy', pos.cy)
-            .attr('r', outerR * 0.75)
-            .attr('stroke', adjustColor(d.baseColor, 1, 0.4));
-    }
+    renderHoverHighlight(d || null);
     // Set opacity for all points: same type 1, others 0.2
     if (d && window.d3 && d3.selectAll) {
         d3.selectAll('.glyph')
@@ -2511,9 +2574,8 @@ dispatcher.on('unlock.map', () => {
     }
     setPanelLocked(false, null);
     hoveredDatum = null;
-    
-    hoverCircle.interrupt();
-    hoverLayer.style('display', 'none');
+
+    clearHoverHighlight();
     
     searchMarker = null;
     searchLayer.style('display', 'none');
@@ -2528,12 +2590,12 @@ dispatcher.on("layoutChanged.mapHover", () => {
 
     hoveredDatum = null;
     dispatcher.call("hoverend", null);
-    hoverCircle.interrupt().attr("r", 0);
-    hoverLayer.style("display", "none");
+    clearHoverHighlight();
     overlayNode.style.cursor = "default";
 });
 
 dispatcher.on("layoutChanged.mapSizing", () => {
+    zoomBehavior.scaleExtent([MIN_ZOOM_SCALE, getCurrentMaxZoomScale()]);
     resize();
 });
 
@@ -2572,17 +2634,7 @@ function onMouseMove(e) {
         if (nearest) {
             getCountryNameForDatum(nearest);
             dispatcher.call("hover", null, nearest);
-            // show svg highlight
-            const pos = projectDatumToScreen(nearest);
-            const { outerR } = calcHoverRadius();
-
-            hoverLayer.style('display', null);
-            hoverCircle
-                .interrupt()
-                .attr('cx', pos.cx)
-                .attr('cy', pos.cy)
-                .attr('r', outerR * 0.75)
-                .attr('stroke', adjustColor(nearest.baseColor, 1, 0.4));
+            renderHoverHighlight(nearest);
 
             overlayNode.style.cursor = 'pointer';
             
@@ -2596,10 +2648,7 @@ function onMouseMove(e) {
             }
         } else {
             dispatcher.call("hoverend", null);
-            hoverCircle
-                .interrupt()
-                .attr('r', 0);
-            hoverLayer.style('display', 'none');
+            clearHoverHighlight();
             overlayNode.style.cursor = 'default';
             
             // Schedule redraw to restore full opacity on hover end
@@ -2624,10 +2673,7 @@ function onMouseLeave() {
     if (hoveredDatum !== null) {
         hoveredDatum = null;
         dispatcher.call("hoverend", null);
-        hoverCircle
-            .interrupt()
-            .attr('r', 0);
-        hoverLayer.style('display', 'none');
+        clearHoverHighlight();
         overlayNode.style.cursor = 'default';
         
         // Schedule redraw to restore full opacity when leaving
@@ -2710,7 +2756,7 @@ function jumpToLocation(lat, lon, label) {
         ? getMobileViewportFocusTarget()
         : { targetX: STATE.width / 2, targetY: STATE.height / 2 };
     const minimumFocusScale = getMinimumScaleForFocusTarget(x, y, mobileTargetX, mobileTargetY);
-    const targetZoom = Math.min(MAX_ZOOM_SCALE, Math.max(10, minimumFocusScale));
+    const targetZoom = Math.min(getCurrentMaxZoomScale(), Math.max(10, minimumFocusScale));
 
     // Pre-constrain the target transform so polar results can still land in the intended focus area.
     const newTransform = buildConstrainedDatumFocusTransform(x, y, targetZoom, mobileTargetX, mobileTargetY);
@@ -2808,7 +2854,7 @@ if (zoomInBtn) {
     zoomInBtn.addEventListener('click', () => {
         if (zoomInBtn.disabled) return;
         const currentTransform = STATE.zoomTransform;
-        const newScale = Math.min(currentTransform.k * 1.5, MAX_ZOOM_SCALE);
+        const newScale = Math.min(currentTransform.k * 1.5, getCurrentMaxZoomScale());
         
         // Zoom towards center of viewport
         const centerX = STATE.width / 2;
