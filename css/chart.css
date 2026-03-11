@@ -1,6 +1,8 @@
-/* Lock hint below action row */
+﻿/* chart.css
+   Chart and panel styles: SVG charts, typography and control styling; uses variables from theme.css.
+*/
 .panel-lock-hint {
-    margin: 5px auto 0 auto;
+    margin: 5px auto 0;
     padding: 8px 10px;
     max-width: 320px;
     background: #f1f4f6;
@@ -8,15 +10,14 @@
     border-radius: 6px;
     font-size: 12px;
     text-align: center;
-    box-shadow: 0 2px 8px rgba(74,144,226,0.08);
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.08);
     line-height: 1.6;
     display: none;
 }
-/* Unified style for export and unlock buttons */
+
 .panel-export-btn,
- .panel-unlock-btn {
-    margin-top: 0;
-    margin-bottom: 0;
+.panel-unlock-btn {
+    margin: 0;
     padding: 6px 16px;
     font-size: 13px;
     font-weight: 600;
@@ -26,12 +27,14 @@
     border-radius: 5px;
     cursor: pointer;
     transition: background 0.2s;
-    box-shadow: 0 2px 8px rgba(74,144,226,0.08);
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.08);
 }
+
 .panel-export-btn:hover,
 .panel-unlock-btn:hover {
     background: #357abd;
 }
+
 .panel-export-btn:active,
 .panel-unlock-btn:active {
     background: #2a5a8f;
@@ -45,9 +48,7 @@
     box-shadow: none;
     opacity: 0.85;
 }
-/* =========================================================
-   Panel action row (export/unlock)
-   ========================================================= */
+
 .panel-action-row {
     display: flex;
     flex-direction: row;
@@ -55,15 +56,11 @@
     align-items: center;
     margin-top: 4px;
     margin-bottom: 8px;
-    padding-top: 0;
     gap: 10px;
     width: 100%;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
-/* =========================================================
-   chart.css
-   Chart and panel styles: SVG charts, typography and control styling; uses variables from theme.css.
-   ========================================================= */
 
 #tempChart,
 #precipChart {
@@ -74,7 +71,6 @@
     flex-shrink: 0;
 }
 
-/* Tab charts */
 #climateComboChart,
 #temperatureScatter,
 #monthlyTemperature,
@@ -85,57 +81,54 @@
     flex-shrink: 0;
 }
 
-#temperatureScatter {
-    height: 392px;
-    margin-bottom: 4px;
-}
-
-#monthlyTemperature {
-    height: 352px;
-    margin-top: 0;
-    margin-bottom: 8px;
-}
-
+#temperatureScatter,
 #precipitationScatter {
     height: 392px;
     margin-bottom: 4px;
 }
 
+#monthlyTemperature,
 #monthlyPrecipitation {
     height: 352px;
     margin-top: 0;
     margin-bottom: 8px;
 }
 
-/* Hemisphere month labels */
 .hemisphere-month-label {
-    margin: 8px;
+    margin: 4px 8px 10px;
     color: #888;
     font-size: 12px;
+    line-height: 1.35;
+    text-align: center;
 }
 
-/* Panel hint styling */
+.hemisphere-month-part {
+    display: block;
+}
+
+.hemisphere-month-part + .hemisphere-month-part {
+    margin-top: 2px;
+}
+
 .panel-hint {
     margin-bottom: 4px;
+    font-size: 11px;
+    color: var(--panel-hint-color);
+    line-height: 1.2;
+    text-align: center;
 }
 
-/* Climate coordinate display */
 #climate-coord {
     font-size: 12px;
     line-height: 1;
     color: #5c5c5c;
     margin: 6px;
     font-weight: 700;
-    letter-spacing: 0em;
+    letter-spacing: 0;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     text-align: center;
 }
-
-/* =========================================================
-   Chart typography
-   SVG text style consistency
-   ========================================================= */
 
 #tempChart,
 #precipChart,
@@ -143,11 +136,7 @@
 #precipChart text {
     font-family: var(--font-family);
     font-weight: 400;
-} 
-
-/* =========================================================
-   Axis styles
-   ========================================================= */
+}
 
 .chart-axis path,
 .chart-axis line {
@@ -159,15 +148,11 @@
 .chart-axis text {
     fill: var(--axis-text);
     font-size: 12px;
-} 
-
-/* =========================================================
-   Data markers
-   ========================================================= */
+}
 
 .temp-line {
     fill: none;
-    stroke-width: 2.0;
+    stroke-width: 2;
     stroke-linejoin: miter;
     stroke-linecap: butt;
 }
@@ -195,7 +180,7 @@
 .chart-hover-line-outline {
     fill: none;
     stroke: #ffffff;
-    stroke-width: 4.0;
+    stroke-width: 4;
     stroke-linecap: round;
     stroke-linejoin: round;
     opacity: 0.9;
@@ -209,10 +194,6 @@
     opacity: 0.9;
 }
 
-/* =========================================================
-   Panel body
-   ========================================================= */
-
 .panel-body {
     display: flex;
     flex-direction: column;
@@ -222,13 +203,12 @@
     gap: 0;
 }
 
-/* Climate stats display below chart */
 #climate-stats {
     display: flex;
     justify-content: space-evenly;
     flex-wrap: wrap;
     gap: 14px;
-    padding: 0 8px;
+    padding: 10px 8px 0;
     margin-top: 0;
     margin-bottom: 12px;
     font-size: 13px;
@@ -252,41 +232,6 @@
     font-weight: 700;
 }
 
-/* Narrow panel layout: vertical stats + scrollbar */
-@media (max-width: 520px) {
-    #climate-stats {
-        flex-direction: column;
-        align-items: stretch;
-        max-height: 190px;
-        overflow-y: auto;
-        padding-right: 12px;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.05);
-    }
-
-    #climate-stats span {
-        align-items: flex-start;
-        width: 100%;
-        padding: 6px;
-    }
-
-    #climate-stats::-webkit-scrollbar {
-        width: 6px;
-    }
-    #climate-stats::-webkit-scrollbar-thumb {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 3px;
-    }
-
-    #climateComboChart {
-        width: calc(100% - 16px);
-    }
-}
-
-/* =========================================================
-   Panel header and titles
-   ========================================================= */
-
 .panel-header {
     text-align: center;
     margin-bottom: 16px;
@@ -299,17 +244,6 @@
     margin-top: 8px;
     margin-bottom: 12px;
 }
-
-.panel-hint {
-    font-size: 11px;
-    color: var(--panel-hint-color);
-    line-height: 1.2;
-    text-align: center;
-}
-
-/* =========================================================
-   Climate label and description
-   ========================================================= */
 
 #climate-type {
     font-size: 15px;
@@ -324,7 +258,7 @@
     line-height: 1.35;
     color: var(--climate-explain-color);
     text-align: center;
-} 
+}
 
 #climate-coord .coord-line,
 #climate-coord .country-line {
@@ -340,16 +274,11 @@
     white-space: nowrap;
 }
 
-/* =========================================================
-   Panel metadata and data source
-   ========================================================= */
-
 .panel-metadata {
-    margin-top: auto;
+    margin-top: 12px;
     padding-top: 10px;
     border-top: 1px solid var(--panel-border);
     flex-shrink: 0;
-
     font-size: 11px;
     line-height: 1.35;
     color: var(--metadata-color);
@@ -367,6 +296,10 @@
 
 .panel-metadata .metadata-line {
     margin-top: 4px;
+}
+
+.panel-metadata .metadata-line:first-child {
+    margin-top: 0;
 }
 
 .climate-stats {
@@ -398,3 +331,86 @@
     font-weight: 700;
 }
 
+#app[data-layout="mobile"] #temperatureScatter,
+#app[data-layout="mobile"] #monthlyTemperature,
+#app[data-layout="mobile"] #precipitationScatter,
+#app[data-layout="mobile"] #monthlyPrecipitation {
+    height: auto;
+}
+
+#app[data-layout="mobile"] .chart-axis text {
+    font-size: 10px;
+}
+
+#app[data-layout="mobile"] .panel-body {
+    overflow: visible;
+}
+
+#app[data-layout="mobile"] .panel-header {
+    margin-bottom: 12px;
+}
+
+#app[data-layout="mobile"] .panel-hint,
+#app[data-layout="mobile"] #climate-coord {
+    display: none;
+}
+
+#app[data-layout="mobile"] .panel-title {
+    font-size: 16px;
+    margin-bottom: 8px;
+}
+
+#app[data-layout="mobile"] #climate-type {
+    font-size: 14px;
+}
+
+#app[data-layout="mobile"] #climate-explain .explain-line {
+    white-space: normal;
+}
+
+#app[data-layout="mobile"] .hemisphere-month-label {
+    margin: 4px 0 10px;
+    font-size: 11px;
+}
+
+#app[data-layout="mobile"] #climate-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0;
+}
+
+#app[data-layout="mobile"] #climate-stats span {
+    min-width: 0;
+    align-items: flex-start;
+    padding: 8px 10px;
+    border-radius: var(--radius-control);
+    background: rgba(245, 247, 249, 0.9);
+}
+
+#app[data-layout="mobile"] #climate-stats span:last-child {
+    grid-column: 1 / -1;
+}
+
+#app[data-layout="mobile"] .panel-action-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+#app[data-layout="mobile"] .panel-action-row > button {
+    width: 100%;
+}
+
+#app[data-layout="mobile"] .panel-action-row > .panel-unlock-btn {
+    grid-column: 1 / -1;
+}
+
+#app[data-layout="mobile"] .panel-lock-hint {
+    max-width: none;
+}
+
+#app[data-layout="mobile"] .panel-metadata {
+    margin-top: 10px;
+    padding-bottom: 6px;
+}

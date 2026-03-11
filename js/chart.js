@@ -40,6 +40,10 @@ import {
 
 // Import shared utilities
 import { dispatcher, getExportingState, setExportingState, updateCoordinateDisplay } from "./chart-common.js";
+
+const EXPORT_FONT_FAMILY = getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-family")
+    .trim() || "Inter, system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Arial, sans-serif";
 import { showLoading, hideLoading } from "./loading.js";
 
 /* =========================================================
@@ -397,7 +401,7 @@ function exportMapAsImage() {
                     const textY = parseFloat(label.getAttribute('y')) || 0;
                     ctx.save();
                     const fontSize = 21 * scale;
-                    ctx.font = `bold ${fontSize}px Inter, 'Helvetica Neue', sans-serif`;
+                    ctx.font = `bold ${fontSize}px ${EXPORT_FONT_FAMILY}`;
                     ctx.textAlign = (label.getAttribute('text-anchor') || 'start') === 'middle' ? 'center' : (label.getAttribute('text-anchor') || 'start');
                     const baseline = label.getAttribute('dominant-baseline') || 'alphabetic';
                     ctx.textBaseline = baseline === 'middle' ? 'middle' : (baseline === 'hanging' ? 'top' : 'alphabetic');

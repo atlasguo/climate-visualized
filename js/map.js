@@ -10,7 +10,7 @@ const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const overlay = d3.select("#overlay");
 const CANVAS_DPR = Math.max(window.devicePixelRatio || 1, 1);
-const CITY_LABEL_FONT_FAMILY = getComputedStyle(document.documentElement)
+const UI_FONT_FAMILY = getComputedStyle(document.documentElement)
     .getPropertyValue("--font-family")
     .trim() || "Inter, system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Arial, sans-serif";
 
@@ -30,7 +30,7 @@ const toggleCountryLabels = document.getElementById("toggle-country-labels");
    Global application state (moved to shared module)
    ========================================================= */
 
-import { STATE, dispatcher, adjustColor, tempToR, precipToR, buildQuadtree, findNearestScreen } from "./shared.js";
+import { STATE, dispatcher, adjustColor, tempToR, precipToR, buildQuadtree, findNearestScreen, canUseHoverPreview, isMobileLayout } from "./shared.js";
 import { loadData, loadCountries, loadOcean, loadCityLabels } from "./data.js";
 import { showLoading, hideLoading } from "./loading.js";
 import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
@@ -77,7 +77,9 @@ let pendingRefineJob = null;
 let refineStartDelayTimer = null;
 let mapBusyLoadingTimer = null;
 let mapBusyLoadingVisible = false;
-const CITY_LABEL_COLOR = "#222222";
+let pendingMobileLockFocusRaf = null;
+const CITY_LABEL_CAPITAL_COLOR = "#111111";
+const CITY_LABEL_NON_CAPITAL_COLOR = "#8d949b";
 const CITY_LABEL_HALO = "rgba(255, 255, 255, 0.75)";
 const CITY_LABEL_HALO_WIDTH = 2.7;
 const CITY_LABEL_PADDING = 3;
@@ -96,6 +98,17 @@ const OCEAN_GLOW_LAYERS = [
 const OCEAN_VIEWPORT_BUFFER_PX = 110;
 const REFINE_START_DELAY_MS = 120;
 const CAN_USE_PATH2D = typeof Path2D === "function";
+const SYMBOL_RADIUS_REFERENCE_WIDTH = 960;
+const MIN_SYMBOL_RADIUS_REFERENCE = 1.2;
+const MIN_SYMBOL_RADIUS_SCALE = 0.28;
+const MIN_POINT_RENDER_RADIUS = 0.2;
+const MIN_GLYPH_RENDER_RADIUS = 0.35;
+const MIN_HOVER_HIT_RADIUS_PX = 10;
+const MIN_TOUCH_HIT_RADIUS_PX = 16;
+const MIN_HOVER_CIRCLE_RADIUS_PX = 4;
+const MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX = 18;
+const MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX = 24;
+const MOBILE_LOCK_FOCUS_SCALE_CANDIDATES = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 
 function getViewportProjectedBounds(transform = STATE.zoomTransform) {
     const k = transform?.k || 1;
@@ -623,7 +636,6 @@ const MAP_POINT_TEMP_SAT_FACTOR = 0.5;
 const MAP_POINT_TEMP_L_FACTOR = 0.75;
 const MAP_BUSY_LOADING_DELAY_MS = 140;
 const GLYPH_SAMPLE_SIZE = 2000;
-const GLYPH_FALLBACK_RADIUS = 1.2;
 const GLYPH_ANGLE_COUNT = 12;
 const GLYPH_SIN = Array.from({ length: GLYPH_ANGLE_COUNT }, (_, i) => Math.sin(i * 2 * Math.PI / GLYPH_ANGLE_COUNT));
 const GLYPH_COS = Array.from({ length: GLYPH_ANGLE_COUNT }, (_, i) => Math.cos(i * 2 * Math.PI / GLYPH_ANGLE_COUNT));
@@ -719,6 +731,7 @@ const referenceLatitudes = [
 
 // Handle container resize: update projection, symbol radius, bounds and redraw
 function resize() {
+    const wasHome = isHomeTransform();
     STATE.width = mapWrapper.clientWidth;
     STATE.height = mapWrapper.clientHeight;
 
@@ -739,8 +752,15 @@ function resize() {
         computeSymbolRadius();
         computeMapBounds();
         computeMapExtent();
+        homeZoomTransform = computeHomeZoomTransform();
         buildQuadtree();
-        constrainTransform();
+        if (wasHome) {
+            syncZoomTransform(homeZoomTransform);
+        } else {
+            constrainTransform();
+            syncZoomTransform();
+        }
+        updateZoomControlState();
         invalidateCaches();
         resizeInteractionSnapshot();
         redraw();
@@ -833,6 +853,24 @@ function nearestDistanceFromQuadtree(quadtree, p) {
     return Number.isFinite(minDist2) ? Math.sqrt(minDist2) : NaN;
 }
 
+function getMinimumSymbolRadius() {
+    const width = Number.isFinite(STATE.width) ? STATE.width : 0;
+    const normalizedWidth = width > 0
+        ? Math.min(1, width / SYMBOL_RADIUS_REFERENCE_WIDTH)
+        : 1;
+    return MIN_SYMBOL_RADIUS_REFERENCE * Math.max(MIN_SYMBOL_RADIUS_SCALE, normalizedWidth);
+}
+
+function getVisualHitRadius(transform = STATE.zoomTransform) {
+    const k = Number.isFinite(transform?.k) ? transform.k : 1;
+    return STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * k * 1.2;
+}
+
+function getInteractionHitRadius(transform = STATE.zoomTransform) {
+    const minimumRadius = canUseHoverPreview() ? MIN_HOVER_HIT_RADIUS_PX : MIN_TOUCH_HIT_RADIUS_PX;
+    return Math.max(minimumRadius, getVisualHitRadius(transform));
+}
+
 /* =========================================================
    Symbol radius estimation
    Based on median nearest-neighbor distance
@@ -840,11 +878,12 @@ function nearestDistanceFromQuadtree(quadtree, p) {
 
 // Estimate base symbol radius from median nearest-neighbor distance
 function computeSymbolRadius() {
+    const minimumSymbolRadius = getMinimumSymbolRadius();
     const pts = STATE.data
         .map(d => ({ x: d.px, y: d.py }))
         .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
     if (pts.length < 2) {
-        STATE.symbolRadius = GLYPH_FALLBACK_RADIUS;
+        STATE.symbolRadius = minimumSymbolRadius;
         return;
     }
 
@@ -865,7 +904,7 @@ function computeSymbolRadius() {
     });
 
     if (!distances.length) {
-        STATE.symbolRadius = GLYPH_FALLBACK_RADIUS;
+        STATE.symbolRadius = minimumSymbolRadius;
         return;
     }
 
@@ -876,7 +915,7 @@ function computeSymbolRadius() {
             ? distances[m]
             : 0.5 * (distances[m - 1] + distances[m]);
 
-    STATE.symbolRadius = Math.max(GLYPH_FALLBACK_RADIUS, median / 2);
+    STATE.symbolRadius = Math.max(minimumSymbolRadius, median / 2);
 }
 
 /* =========================================================
@@ -938,26 +977,55 @@ function computeMapExtent() {
     STATE.mapExtent = { minX, maxX, minY, maxY };
 }
 
+function getRenderableMapExtent() {
+    const b = STATE.mapExtent;
+    if (!b) return null;
+    if (![b.minX, b.maxX, b.minY, b.maxY].every(Number.isFinite)) {
+        return null;
+    }
+    return b;
+}
+
+function hasRenderableMapFrame() {
+    return !!STATE.projection
+        && Number.isFinite(STATE.width) && STATE.width > 0
+        && Number.isFinite(STATE.height) && STATE.height > 0
+        && !!getRenderableMapExtent();
+}
+
 /* =========================================================
    Pan and zoom constraint
    ========================================================= */
 
-function constrainTransform() {
-    const t = STATE.zoomTransform;
-    const k = t.k;
-    const b = STATE.mapBounds;
-    // Allow panning beyond bounds by a fixed geographic margin (10 degrees on each side).
-    let overscrollX = 0;
-    let overscrollY = 0;
+function getConstraintOverscrollBase() {
+    let overscrollXBase = 0;
+    let overscrollYBase = 0;
     if (STATE.projection) {
         const center = STATE.projection([0, 0]);
         const lon10 = STATE.projection([10, 0]);
         const lat10 = STATE.projection([0, 10]);
         if (center && lon10 && lat10) {
-            overscrollX = Math.abs(lon10[0] - center[0]) * k;
-            overscrollY = Math.abs(lat10[1] - center[1]) * k;
+            overscrollXBase = Math.abs(lon10[0] - center[0]);
+            overscrollYBase = Math.abs(lat10[1] - center[1]);
         }
     }
+    return { overscrollXBase, overscrollYBase };
+}
+
+function getConstraintOverscroll(scale = STATE.zoomTransform?.k || 1) {
+    const safeScale = Number.isFinite(scale) ? scale : 1;
+    const { overscrollXBase, overscrollYBase } = getConstraintOverscrollBase();
+    return {
+        overscrollX: overscrollXBase * safeScale,
+        overscrollY: overscrollYBase * safeScale
+    };
+}
+
+function constrainTransform() {
+    const t = STATE.zoomTransform;
+    const k = t.k;
+    const b = STATE.mapBounds;
+    const { overscrollX, overscrollY } = getConstraintOverscroll(k);
 
     const w = (b.maxX - b.minX) * k;
     const h = (b.maxY - b.minY) * k;
@@ -984,12 +1052,18 @@ function constrainTransform() {
    ========================================================= */
 
 function drawMapBackground(transform = STATE.zoomTransform) {
-    const b = STATE.mapExtent;
-    const { x, y, k } = transform;
+    const b = getRenderableMapExtent();
+    const safeWidth = Number.isFinite(STATE.width) ? STATE.width : 0;
+    const safeHeight = Number.isFinite(STATE.height) ? STATE.height : 0;
+    const x = Number.isFinite(transform?.x) ? transform.x : 0;
+    const y = Number.isFinite(transform?.y) ? transform.y : 0;
+    const k = Number.isFinite(transform?.k) ? transform.k : 1;
 
     ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, STATE.width, STATE.height);
+    ctx.fillRect(0, 0, safeWidth, safeHeight);
+
+    if (!b) return;
 
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(
@@ -1001,7 +1075,7 @@ function drawMapBackground(transform = STATE.zoomTransform) {
 }
 
 function drawMapContentFrame(transform = STATE.zoomTransform) {
-    const b = STATE.mapExtent;
+    const b = getRenderableMapExtent();
     if (!b) return;
     const { x, y, k } = transform;
     const left = b.minX * k + x;
@@ -1227,11 +1301,11 @@ function drawCityLabels(transform = STATE.zoomTransform, collision = null) {
 
     for (const d of visible) {
         const fontSize = getCityLabelFontSize(d._rank, k);
-        ctx.font = `${fontSize}px ${CITY_LABEL_FONT_FAMILY}`;
+        ctx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
         const label = d.name;
         if (!label) continue;
         const isCapital = d._isCapital;
-        ctx.fillStyle = isCapital ? "#111111" : "#666666";
+        ctx.fillStyle = isCapital ? CITY_LABEL_CAPITAL_COLOR : CITY_LABEL_NON_CAPITAL_COLOR;
         const sx = d.px * k + x;
         const sy = d.py * k + y;
         const textWidth = ctx.measureText(label).width;
@@ -1346,7 +1420,7 @@ function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
     ctx.lineJoin = "round";
 
     const fontSize = 10 * Math.max(0.9, Math.min(1.1, Math.pow(k, 0.1)));
-    ctx.font = `${fontSize}px ${CITY_LABEL_FONT_FAMILY}`;
+    ctx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
 
     for (const d of visible) {
         const [px, py] = d.f._labelPoint;
@@ -1464,7 +1538,7 @@ function drawPointsBatchOnContext(drawCtx, transform, lockedType = null, hovered
     const pointRadius = STATE.symbolRadius * DENSITY_FACTOR * k * 0.8;
     
     // Skip rendering if points are too small to see
-    if (pointRadius < 0.5) return;
+    if (pointRadius < MIN_POINT_RENDER_RADIUS) return;
 
     // Compute viewport bounds to skip off-screen points
     const viewportPadding = pointRadius + 2;
@@ -1515,7 +1589,7 @@ function drawGlyphsBatchOnContext(drawCtx, transform, lockedType = null, hovered
     if (!STATE.data || !STATE.data.length) return;
     const { x, y, k } = transform;
     const maxGlyphRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * k;
-    if (maxGlyphRadius < 0.5) return;
+    if (maxGlyphRadius < MIN_GLYPH_RENDER_RADIUS) return;
 
     const viewportPadding = maxGlyphRadius + 2;
     const viewportLeft = -viewportPadding - x / k;
@@ -1617,7 +1691,7 @@ function buildAxisLabelSpecs(width, height, zoomTransform) {
 }
 
 function renderAxisLabelSpecs(ctx, specs, fontSize, scale = 1) {
-    ctx.font = `${fontSize}px Inter, system-ui`;
+    ctx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
     ctx.globalAlpha = 1;
     ctx.lineWidth = 4;
     ctx.lineJoin = "round";
@@ -1735,6 +1809,10 @@ function scheduleRefineStep(job, fn) {
 }
 
 function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = true, drawMarkers = true } = {}) {
+    if (!hasRenderableMapFrame()) {
+        drawMapBackground(transform);
+        return;
+    }
     drawMapBackground(transform);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (showOcean && oceanCache && hasOceanCache(transform)) {
@@ -1766,6 +1844,10 @@ function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = 
 
 function redrawFastPostInteraction() {
     endInteractionBitmapMode();
+    if (!hasRenderableMapFrame()) {
+        drawMapBackground();
+        return;
+    }
     const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
@@ -1778,6 +1860,7 @@ function redrawFastPostInteraction() {
 
 function startRefineJob(epoch) {
     cancelRefineJob();
+    if (!hasRenderableMapFrame()) return;
     const job = {
         epoch,
         cancelled: false,
@@ -1820,6 +1903,10 @@ function redrawGlyphsOnly() {
     if (!isZooming) {
         endInteractionBitmapMode();
     }
+    if (!hasRenderableMapFrame()) {
+        drawMapBackground();
+        return;
+    }
     initCaches();
     resizeCaches();
     const transform = makeTransformSnapshot();
@@ -1839,6 +1926,11 @@ function redrawGlyphsOnly() {
 function redraw(skipAxisLabels = false) {
     cancelRefineJob();
     endInteractionBitmapMode();
+    if (!hasRenderableMapFrame()) {
+        drawMapBackground();
+        clearMapBusyLoadingOverlay();
+        return;
+    }
     const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
@@ -1867,7 +1959,7 @@ window.redrawMap = redraw;
 function calcHoverRadius() {
     const R_BASE = STATE.symbolRadius * DENSITY_FACTOR * STATE.zoomTransform.k;
     const R_PRECIP = R_BASE * PRECIP_RADIUS_SCALE;
-    const outerR = Math.max(R_PRECIP, R_BASE) * 1.35;
+    const outerR = Math.max(Math.max(R_PRECIP, R_BASE) * 1.35, MIN_HOVER_CIRCLE_RADIUS_PX);
     return { R_BASE, R_PRECIP, outerR };
 }
 
@@ -1883,6 +1975,178 @@ function projectDatumToScreen(datum) {
         cx: x0 * STATE.zoomTransform.k + STATE.zoomTransform.x,
         cy: y0 * STATE.zoomTransform.k + STATE.zoomTransform.y
     };
+}
+
+function getMobileSheetTargetHeight() {
+    const viewportHeight = window.visualViewport?.height || window.innerHeight || STATE.height;
+    return Math.min(viewportHeight * 0.64, 600);
+}
+
+function getMobileSheetPeekHeight() {
+    const rootStyles = getComputedStyle(document.documentElement);
+    const rawValue = rootStyles.getPropertyValue("--sheet-peek-height").trim();
+    const parsed = Number.parseFloat(rawValue);
+    return Number.isFinite(parsed) ? parsed : 72;
+}
+
+function getMobileViewportBounds(sheetHeight) {
+    const searchBox = document.getElementById("search-box");
+    const optionsToggle = document.getElementById("map-options-toggle");
+    const searchRect = searchBox?.getBoundingClientRect?.();
+    const optionsRect = optionsToggle?.getBoundingClientRect?.();
+    const topSafe = Math.max(
+        Number.isFinite(searchRect?.bottom) ? searchRect.bottom + 16 : 72,
+        Number.isFinite(optionsRect?.bottom) ? optionsRect.bottom + 16 : 72
+    );
+    const visibleBottom = Math.max(topSafe + 48, STATE.height - sheetHeight - 24);
+    return { topSafe, visibleBottom };
+}
+
+function getHomeViewportBounds() {
+    if (isMobileLayout()) {
+        return getMobileViewportBounds(getMobileSheetPeekHeight());
+    }
+    return {
+        topSafe: 0,
+        visibleBottom: STATE.height
+    };
+}
+
+function getMobileViewportFocusTarget() {
+    const { topSafe, visibleBottom } = getMobileViewportBounds(getMobileSheetTargetHeight());
+    const targetX = STATE.width / 2;
+    const targetY = topSafe + (visibleBottom - topSafe) * 0.56;
+    return { targetX, targetY, topSafe, visibleBottom };
+}
+
+function isPointComfortablyVisibleInMobileViewport(screenX, screenY, topSafe, visibleBottom) {
+    return screenY >= topSafe + MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX
+        && screenY <= visibleBottom - MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX
+        && screenX >= MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX
+        && screenX <= STATE.width - MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX;
+}
+
+function getMinimumScaleForFocusTarget(x0, y0, targetX, targetY) {
+    const b = STATE.mapBounds;
+    if (!b || !Number.isFinite(x0) || !Number.isFinite(y0)) {
+        return MIN_ZOOM_SCALE;
+    }
+
+    const { overscrollXBase, overscrollYBase } = getConstraintOverscrollBase();
+    const leftCapacity = x0 - b.minX + overscrollXBase;
+    const rightCapacity = b.maxX - x0 + overscrollXBase;
+    const topCapacity = y0 - b.minY + overscrollYBase;
+    const bottomCapacity = b.maxY - y0 + overscrollYBase;
+
+    const minScaleLeft = leftCapacity > 0 ? targetX / leftCapacity : MAX_ZOOM_SCALE;
+    const minScaleRight = rightCapacity > 0 ? (STATE.width - targetX) / rightCapacity : MAX_ZOOM_SCALE;
+    const minScaleTop = topCapacity > 0 ? targetY / topCapacity : MAX_ZOOM_SCALE;
+    const minScaleBottom = bottomCapacity > 0 ? (STATE.height - targetY) / bottomCapacity : MAX_ZOOM_SCALE;
+
+    const minimumScale = Math.max(
+        MIN_ZOOM_SCALE,
+        minScaleLeft,
+        minScaleRight,
+        minScaleTop,
+        minScaleBottom
+    );
+    return Number.isFinite(minimumScale)
+        ? Math.min(MAX_ZOOM_SCALE, minimumScale)
+        : MAX_ZOOM_SCALE;
+}
+
+function buildConstrainedDatumFocusTransform(x0, y0, scale, targetX, targetY) {
+    const unconstrained = d3.zoomIdentity
+        .translate(targetX - x0 * scale, targetY - y0 * scale)
+        .scale(scale);
+    const previousTransform = STATE.zoomTransform;
+    STATE.zoomTransform = { x: unconstrained.x, y: unconstrained.y, k: unconstrained.k };
+    constrainTransform();
+    const constrained = cloneZoomTransform(STATE.zoomTransform);
+    STATE.zoomTransform = previousTransform;
+    return constrained;
+}
+
+function findMobileLockFocusTransform(x0, y0, targetX, targetY, topSafe, visibleBottom) {
+    const currentScale = Math.max(STATE.zoomTransform.k || MIN_ZOOM_SCALE, MIN_ZOOM_SCALE);
+    const minimumFocusScale = getMinimumScaleForFocusTarget(x0, y0, targetX, targetY);
+    const candidateScales = new Set([
+        currentScale,
+        homeZoomTransform?.k || MIN_ZOOM_SCALE,
+        minimumFocusScale,
+        Math.min(MAX_ZOOM_SCALE, minimumFocusScale * 1.05)
+    ]);
+
+    MOBILE_LOCK_FOCUS_SCALE_CANDIDATES.forEach(scale => {
+        if (scale >= currentScale && scale <= MAX_ZOOM_SCALE) {
+            candidateScales.add(scale);
+        }
+    });
+
+    if (minimumFocusScale > MOBILE_LOCK_FOCUS_SCALE_CANDIDATES[MOBILE_LOCK_FOCUS_SCALE_CANDIDATES.length - 1]) {
+        candidateScales.add(MAX_ZOOM_SCALE);
+    }
+
+    const orderedScales = Array.from(candidateScales)
+        .filter(scale => Number.isFinite(scale) && scale >= currentScale && scale <= MAX_ZOOM_SCALE)
+        .sort((a, b) => a - b);
+
+    let fallbackTransform = cloneZoomTransform(STATE.zoomTransform);
+
+    for (const scale of orderedScales) {
+        const transform = buildConstrainedDatumFocusTransform(x0, y0, scale, targetX, targetY);
+        const screenX = x0 * transform.k + transform.x;
+        const screenY = y0 * transform.k + transform.y;
+        if (isPointComfortablyVisibleInMobileViewport(screenX, screenY, topSafe, visibleBottom)) {
+            return transform;
+        }
+        fallbackTransform = transform;
+    }
+
+    return fallbackTransform;
+}
+
+function focusLockedDatumInMobileViewport(datum) {
+    if (!isMobileLayout() || !datum || !STATE.projection) return;
+
+    let x0 = datum.px;
+    let y0 = datum.py;
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) {
+        [x0, y0] = STATE.projection([datum.lon, datum.lat]);
+    }
+    if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
+
+    const { targetX, targetY, topSafe, visibleBottom } = getMobileViewportFocusTarget();
+    const currentX = x0 * STATE.zoomTransform.k + STATE.zoomTransform.x;
+    const currentY = y0 * STATE.zoomTransform.k + STATE.zoomTransform.y;
+    const comfortablyVisible = isPointComfortablyVisibleInMobileViewport(currentX, currentY, topSafe, visibleBottom);
+    const deltaX = targetX - currentX;
+    const deltaY = targetY - currentY;
+    if (comfortablyVisible && Math.abs(deltaX) < 20 && Math.abs(deltaY) < 20) {
+        return;
+    }
+
+    const constrained = findMobileLockFocusTransform(x0, y0, targetX, targetY, topSafe, visibleBottom);
+
+    overlay.interrupt();
+    overlay
+        .transition()
+        .duration(280)
+        .ease(d3.easeCubicOut)
+        .call(zoomBehavior.transform, constrained);
+}
+
+function scheduleMobileLockFocus(datum) {
+    if (pendingMobileLockFocusRaf) {
+        cancelAnimationFrame(pendingMobileLockFocusRaf);
+        pendingMobileLockFocusRaf = null;
+    }
+    if (!isMobileLayout() || !datum) return;
+
+    pendingMobileLockFocusRaf = requestAnimationFrame(() => {
+        pendingMobileLockFocusRaf = null;
+        focusLockedDatumInMobileViewport(datum);
+    });
 }
 
 // Update hover circle position based on current transform
@@ -2012,9 +2276,94 @@ let zoomRaf = null;
 let zoomEndRaf = null;
 let isZooming = false;
 let scheduleFullRedraw = false;
+const MIN_ZOOM_SCALE = 1;
+const MAX_ZOOM_SCALE = 20;
+const TRANSFORM_EPSILON = 1e-6;
+let homeZoomTransform = d3.zoomIdentity;
+
+function isNearValue(value, target, epsilon = TRANSFORM_EPSILON) {
+    return Math.abs(value - target) <= epsilon;
+}
+
+function cloneZoomTransform(transform = d3.zoomIdentity) {
+    const x = Number.isFinite(transform?.x) ? transform.x : 0;
+    const y = Number.isFinite(transform?.y) ? transform.y : 0;
+    const k = Number.isFinite(transform?.k) ? transform.k : MIN_ZOOM_SCALE;
+    return d3.zoomIdentity.translate(x, y).scale(k);
+}
+
+function syncZoomTransform(transform = STATE.zoomTransform) {
+    STATE.zoomTransform = cloneZoomTransform(transform);
+    const overlayElement = overlay.node();
+    if (overlayElement) {
+        overlayElement.__zoom = STATE.zoomTransform;
+    }
+}
+
+function computeHomeZoomTransform() {
+    if (!hasRenderableMapFrame()) {
+        return d3.zoomIdentity;
+    }
+
+    const b = getRenderableMapExtent();
+    const contentWidth = b.maxX - b.minX;
+    const contentHeight = b.maxY - b.minY;
+    if (!(contentWidth > 0 && contentHeight > 0)) {
+        return d3.zoomIdentity;
+    }
+
+    const { topSafe, visibleBottom } = getHomeViewportBounds();
+    const visibleWidth = STATE.width;
+    const visibleHeight = visibleBottom - topSafe;
+    if (!(visibleWidth > 0 && visibleHeight > 0)) {
+        return d3.zoomIdentity;
+    }
+
+    const scale = Math.max(
+        MIN_ZOOM_SCALE,
+        Math.min(
+            MAX_ZOOM_SCALE,
+            Math.max(visibleWidth / contentWidth, visibleHeight / contentHeight)
+        )
+    );
+    const centerX = (b.minX + b.maxX) / 2;
+    const centerY = (b.minY + b.maxY) / 2;
+    const candidate = d3.zoomIdentity
+        .translate(
+            visibleWidth / 2 - centerX * scale,
+            topSafe + visibleHeight / 2 - centerY * scale
+        )
+        .scale(scale);
+
+    const previousTransform = STATE.zoomTransform;
+    STATE.zoomTransform = { x: candidate.x, y: candidate.y, k: candidate.k };
+    constrainTransform();
+    const constrained = cloneZoomTransform(STATE.zoomTransform);
+    STATE.zoomTransform = previousTransform;
+    return constrained;
+}
+
+function isHomeTransform(transform = STATE.zoomTransform) {
+    return isNearValue(transform?.k ?? MIN_ZOOM_SCALE, homeZoomTransform?.k ?? MIN_ZOOM_SCALE)
+        && isNearValue(transform?.x ?? 0, homeZoomTransform?.x ?? 0)
+        && isNearValue(transform?.y ?? 0, homeZoomTransform?.y ?? 0);
+}
+
+function setZoomButtonDisabled(button, disabled) {
+    if (!button) return;
+    button.disabled = disabled;
+    button.setAttribute("aria-disabled", String(disabled));
+}
+
+function updateZoomControlState(transform = STATE.zoomTransform) {
+    const scale = transform?.k ?? MIN_ZOOM_SCALE;
+    setZoomButtonDisabled(zoomInBtn, scale >= MAX_ZOOM_SCALE - TRANSFORM_EPSILON);
+    setZoomButtonDisabled(zoomOutBtn, scale <= MIN_ZOOM_SCALE + TRANSFORM_EPSILON);
+    setZoomButtonDisabled(zoomResetBtn, isHomeTransform(transform));
+}
 
 const zoomBehavior = d3.zoom()
-    .scaleExtent([1, 20])
+    .scaleExtent([MIN_ZOOM_SCALE, MAX_ZOOM_SCALE])
     .on("zoom", e => {
         cancelRefineJob();
         if (zoomEndRaf) {
@@ -2022,6 +2371,7 @@ const zoomBehavior = d3.zoom()
             zoomEndRaf = null;
         }
         STATE.zoomTransform = e.transform;
+        updateZoomControlState(STATE.zoomTransform);
         isZooming = true;
         scheduleFullRedraw = true;
 
@@ -2035,6 +2385,7 @@ const zoomBehavior = d3.zoom()
         zoomRaf = requestAnimationFrame(() => {
             zoomRaf = null;
             constrainTransform();
+            updateZoomControlState();
             // During active zoom in glyph mode: transform snapshot bitmap for smooth interaction
             if (symbolStyle === "glyph" && isInteractingBitmapMode && drawInteractionBitmap()) {
                 return;
@@ -2057,6 +2408,7 @@ const zoomBehavior = d3.zoom()
                 zoomEndRaf = null;
                 if (isZooming) return;
                 constrainTransform();
+                updateZoomControlState();
                 renderEpoch += 1;
                 const epoch = renderEpoch;
                 redrawFastPostInteraction();
@@ -2108,6 +2460,7 @@ let searchPoint = null; // Store the search input location for relative position
 dispatcher.on('lock.map', d => {
     setPanelLocked(true, d || null);
     hoveredDatum = d || null;
+    scheduleMobileLockFocus(d || null);
 
     if (d && STATE.projection) {
         const pos = projectDatumToScreen(d);
@@ -2140,6 +2493,10 @@ dispatcher.on('lock.map', d => {
 });
 
 dispatcher.on('unlock.map', () => {
+    if (pendingMobileLockFocusRaf) {
+        cancelAnimationFrame(pendingMobileLockFocusRaf);
+        pendingMobileLockFocusRaf = null;
+    }
     setPanelLocked(false, null);
     hoveredDatum = null;
     
@@ -2154,6 +2511,20 @@ dispatcher.on('unlock.map', () => {
     if (typeof redraw === 'function') redraw();
 })
 
+dispatcher.on("layoutChanged.mapHover", () => {
+    if (canUseHoverPreview()) return;
+
+    hoveredDatum = null;
+    dispatcher.call("hoverend", null);
+    hoverCircle.interrupt().attr("r", 0);
+    hoverLayer.style("display", "none");
+    overlayNode.style.cursor = "default";
+});
+
+dispatcher.on("layoutChanged.mapSizing", () => {
+    resize();
+});
+
 // Handle symbol style change (point vs glyph mode)
 dispatcher.on('symbolStyleChanged.map', newStyle => {
     symbolStyle = newStyle;
@@ -2166,6 +2537,7 @@ let hoverRedrawScheduled = false;
 
 function onMouseMove(e) {
     if (!STATE.projection) return;
+    if (!canUseHoverPreview()) return;
 
     const rect = overlay.node().getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -2179,7 +2551,7 @@ function onMouseMove(e) {
     if (locked) return;
 
     // Use screen-space quadtree for fast nearest lookup
-    const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
+    const pixelRadius = getInteractionHitRadius();
     const nearest = findNearestScreen(sx, sy, pixelRadius);
 
     // Only update state when hover target changes
@@ -2231,6 +2603,8 @@ function onMouseMove(e) {
 }
 
 function onMouseLeave() {
+    if (!canUseHoverPreview()) return;
+
     // If the panel is locked, keep the highlight visible when the cursor leaves the overlay
     const { locked } = getLockState();
     if (locked) return;
@@ -2318,18 +2692,16 @@ function jumpToLocation(lat, lon, label) {
     // Store the search input location for label positioning
     searchPoint = { lat, lon };
 
-    const targetZoom = 10;
     const [x, y] = STATE.projection([lon, lat]);
 
-    // Calculate center of screen
-    const centerX = STATE.width / 2;
-    const centerY = STATE.height / 2;
+    const { targetX: mobileTargetX, targetY: mobileTargetY } = isMobileLayout()
+        ? getMobileViewportFocusTarget()
+        : { targetX: STATE.width / 2, targetY: STATE.height / 2 };
+    const minimumFocusScale = getMinimumScaleForFocusTarget(x, y, mobileTargetX, mobileTargetY);
+    const targetZoom = Math.min(MAX_ZOOM_SCALE, Math.max(10, minimumFocusScale));
 
-    // Calculate new transform to center the location at target zoom
-    const newX = centerX - x * targetZoom;
-    const newY = centerY - y * targetZoom;
-
-    const newTransform = d3.zoomIdentity.translate(newX, newY).scale(targetZoom);
+    // Pre-constrain the target transform so polar results can still land in the intended focus area.
+    const newTransform = buildConstrainedDatumFocusTransform(x, y, targetZoom, mobileTargetX, mobileTargetY);
     
     const lockNearest = () => {
         let nearest = null;
@@ -2342,11 +2714,6 @@ function jumpToLocation(lat, lon, label) {
                 minDist = dist;
                 nearest = d;
             }
-        }
-
-        const { locked } = getLockState();
-        if (locked) {
-            dispatcher.call("select", null, null);
         }
 
         if (nearest) {
@@ -2423,10 +2790,13 @@ const zoomInBtn = document.getElementById('zoom-in');
 const zoomOutBtn = document.getElementById('zoom-out');
 const zoomResetBtn = document.getElementById('zoom-reset');
 
+updateZoomControlState(d3.zoomIdentity);
+
 if (zoomInBtn) {
     zoomInBtn.addEventListener('click', () => {
+        if (zoomInBtn.disabled) return;
         const currentTransform = STATE.zoomTransform;
-        const newScale = Math.min(currentTransform.k * 1.5, 20); // max scale 20
+        const newScale = Math.min(currentTransform.k * 1.5, MAX_ZOOM_SCALE);
         
         // Zoom towards center of viewport
         const centerX = STATE.width / 2;
@@ -2449,8 +2819,9 @@ if (zoomInBtn) {
 
 if (zoomOutBtn) {
     zoomOutBtn.addEventListener('click', () => {
+        if (zoomOutBtn.disabled) return;
         const currentTransform = STATE.zoomTransform;
-        const newScale = Math.max(currentTransform.k / 1.5, 1); // min scale 1
+        const newScale = Math.max(currentTransform.k / 1.5, MIN_ZOOM_SCALE);
         
         // Zoom from center of viewport
         const centerX = STATE.width / 2;
@@ -2473,11 +2844,12 @@ if (zoomOutBtn) {
 
 if (zoomResetBtn) {
     zoomResetBtn.addEventListener('click', () => {
-        // Reset to initial view (scale 1, centered)
+        if (zoomResetBtn.disabled) return;
+        // Reset to the layout-specific home view.
         overlay.transition()
             .duration(600)
             .ease(d3.easeCubicOut)
-            .call(zoomBehavior.transform, d3.zoomIdentity);
+            .call(zoomBehavior.transform, cloneZoomTransform(homeZoomTransform));
     });
 }
 
@@ -2520,6 +2892,8 @@ export async function init() {
     computeSymbolRadius();
     computeMapBounds();
     computeMapExtent();
+    homeZoomTransform = computeHomeZoomTransform();
+    syncZoomTransform(homeZoomTransform);
     // Build quadtree for fast screen-space queries
     buildQuadtree();
     // Initialize caches
@@ -2527,6 +2901,7 @@ export async function init() {
     resizeCaches();
     resizeInteractionSnapshot();
     redraw();
+    updateZoomControlState();
 
     // Register event listeners after initialization
     overlayNode.addEventListener("mousemove", onMouseMove);
@@ -2537,7 +2912,7 @@ export async function init() {
         const rect = overlay.node().getBoundingClientRect();
         const sx = e.clientX - rect.left;
         const sy = e.clientY - rect.top;
-        const pixelRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * STATE.zoomTransform.k * 1.2;
+        const pixelRadius = getInteractionHitRadius();
         const d = findNearestScreen(sx, sy, pixelRadius);
 
         if (d) {

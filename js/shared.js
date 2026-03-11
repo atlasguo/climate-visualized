@@ -1,7 +1,14 @@
-/* shared.js
+﻿/* shared.js
    Shared module: export global STATE, dispatcher and utility helpers.
    Purpose: decouple map and chart for easier testing and extension.
 */
+
+export const LAYOUT_BREAKPOINTS = Object.freeze({
+    mobileMax: 767,
+    compactMax: 1700
+});
+
+const COMPACT_COLLAPSED_MAX = 1150;
 
 export const STATE = {
     width: 0,
@@ -11,16 +18,169 @@ export const STATE = {
     zoomTransform: d3.zoomIdentity,
     mapBounds: null,
     mapExtent: null,
-    symbolRadius: null
+    symbolRadius: null,
+    layoutMode: "desktop",
+    compactControlsMode: "regular",
+    mobileSheetOpen: false,
+    mobileOptionsOpen: false
 };
 
 export const dispatcher = d3.dispatch(
-    "hover", "hoverend", 
-    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged", "symbolStyleChanged"
+    "hover", "hoverend",
+    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged", "symbolStyleChanged",
+    "layoutChanged", "mobileSheetChanged", "mobileOptionsChanged"
 );
 
 // Hover threshold (degrees^2) - preserved for backward compatibility
 export const HOVER_MAX_DIST2 = 0.25 * 0.25; // degrees^2 (~25 km)
+
+function getAppRoot() {
+    return document.getElementById("app");
+}
+
+function getMobileSheetToggleButton() {
+    return document.getElementById("mobile-sheet-toggle");
+}
+
+function getMapOptionsToggleButton() {
+    return document.getElementById("map-options-toggle");
+}
+
+function getMapOptionsPopover() {
+    return document.getElementById("map-options-popover");
+}
+
+function usesCollapsedMapControlsForState(layoutMode, compactControlsMode) {
+    return layoutMode === "mobile"
+        || (layoutMode === "compact" && compactControlsMode === "collapsed");
+}
+
+function syncUiStateToDom() {
+    const app = getAppRoot();
+    const isMobile = STATE.layoutMode === "mobile";
+    const usesCollapsedControls = usesCollapsedMapControlsForState(STATE.layoutMode, STATE.compactControlsMode);
+    const sheetOpen = isMobile && STATE.mobileSheetOpen;
+    const optionsOpen = usesCollapsedControls && STATE.mobileOptionsOpen;
+
+    if (app) {
+        app.setAttribute("data-layout", STATE.layoutMode);
+        app.setAttribute("data-compact-controls", STATE.compactControlsMode);
+        app.classList.toggle("mobile-sheet-open", sheetOpen);
+        app.classList.toggle("mobile-options-open", optionsOpen);
+    }
+
+    const sheetToggle = getMobileSheetToggleButton();
+    if (sheetToggle) {
+        sheetToggle.setAttribute("aria-expanded", String(sheetOpen));
+        sheetToggle.textContent = sheetOpen ? "Close" : "Open";
+    }
+
+    const optionsToggle = getMapOptionsToggleButton();
+    if (optionsToggle) {
+        optionsToggle.setAttribute("aria-expanded", String(optionsOpen));
+    }
+
+    const optionsPopover = getMapOptionsPopover();
+    if (optionsPopover) {
+        optionsPopover.setAttribute("aria-hidden", String(!optionsOpen || !usesCollapsedControls));
+    }
+}
+
+export function getLayoutModeForWidth(width = window.innerWidth) {
+    if (width <= LAYOUT_BREAKPOINTS.mobileMax) {
+        return "mobile";
+    }
+    if (width <= LAYOUT_BREAKPOINTS.compactMax) {
+        return "compact";
+    }
+    return "desktop";
+}
+
+export function isMobileLayout() {
+    return STATE.layoutMode === "mobile";
+}
+
+export function isCompactLayout() {
+    return STATE.layoutMode === "compact";
+}
+
+export function getCompactControlsModeForWidth(width = window.innerWidth, layoutMode = getLayoutModeForWidth(width)) {
+    return layoutMode === "compact" && width <= COMPACT_COLLAPSED_MAX
+        ? "collapsed"
+        : "regular";
+}
+
+export function isCollapsedCompactLayout() {
+    return isCompactLayout() && STATE.compactControlsMode === "collapsed";
+}
+
+export function usesCollapsedMapControls() {
+    return usesCollapsedMapControlsForState(STATE.layoutMode, STATE.compactControlsMode);
+}
+
+export function supportsFinePointer() {
+    if (typeof window.matchMedia !== "function") {
+        return true;
+    }
+    return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+}
+
+export function canUseHoverPreview() {
+    return !isMobileLayout() && supportsFinePointer();
+}
+
+export function syncLayoutMode(width = window.innerWidth) {
+    const nextMode = getLayoutModeForWidth(width);
+    const nextCompactControlsMode = getCompactControlsModeForWidth(width, nextMode);
+    const layoutChanged = STATE.layoutMode !== nextMode;
+    const compactControlsChanged = STATE.compactControlsMode !== nextCompactControlsMode;
+    STATE.layoutMode = nextMode;
+    STATE.compactControlsMode = nextCompactControlsMode;
+
+    if (nextMode !== "mobile") {
+        STATE.mobileSheetOpen = false;
+    }
+
+    if (layoutChanged || compactControlsChanged || !usesCollapsedMapControlsForState(nextMode, nextCompactControlsMode)) {
+        STATE.mobileOptionsOpen = false;
+    }
+
+    syncUiStateToDom();
+
+    if (layoutChanged || compactControlsChanged) {
+        dispatcher.call("layoutChanged", null, nextMode);
+    }
+
+    return nextMode;
+}
+
+export function setMobileSheetOpen(value) {
+    const nextValue = isMobileLayout() ? !!value : false;
+    const changed = STATE.mobileSheetOpen !== nextValue;
+    STATE.mobileSheetOpen = nextValue;
+    syncUiStateToDom();
+    if (changed) {
+        dispatcher.call("mobileSheetChanged", null, nextValue);
+    }
+}
+
+export function toggleMobileSheet() {
+    setMobileSheetOpen(!STATE.mobileSheetOpen);
+}
+
+export function setMobileOptionsOpen(value) {
+    const nextValue = usesCollapsedMapControls() ? !!value : false;
+    const changed = STATE.mobileOptionsOpen !== nextValue;
+    STATE.mobileOptionsOpen = nextValue;
+    syncUiStateToDom();
+    if (changed) {
+        dispatcher.call("mobileOptionsChanged", null, nextValue);
+    }
+}
+
+export function toggleMobileOptions() {
+    setMobileOptionsOpen(!STATE.mobileOptionsOpen);
+}
 
 // Color and mapping helpers
 // Adjust color saturation and lightness; return hex
@@ -84,7 +244,7 @@ export function findNearest(lon, lat) {
    Screen-space quadtree for fast nearest-neighbor lookup
    Build once when projection or data changes; searches operate
    in projected (pre-transform) coordinates so we don't need to
-   rebuild on every zoom — we scale the search radius during query.
+   rebuild on every zoom - we scale the search radius during query.
    ========================================================= */
 
 let quadtreeRoot = null;

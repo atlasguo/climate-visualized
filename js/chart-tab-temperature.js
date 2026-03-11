@@ -5,11 +5,12 @@
 
 import {
     MONTH_FULL,
-    tempColor, showTooltip, hideTooltip,
+    tempColor, showTooltip, hideTooltip, bindTooltipInteraction, getDetailChartSize,
     RANGE_OPACITY_UNLOCKED,
     RANGE_OPACITY_LOCKED_ACTIVE,
     RANGE_OPACITY_LOCKED_DIM,
     hoverCircleColor,
+    appendChartHeading,
     getActiveDatumHelper,
     updateCoordinateDisplay,
     dispatcher, STATE
@@ -68,6 +69,11 @@ function updateTemperatureScatterHover(d) {
         .attr("cy", v => y(v.t_07))
         .attr("fill", v => hoverCircleColor(v.baseColor));
     dots.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("circle"),
+        (_, v) => `Jan: ${v.t_01.toFixed(1)}°C, Jul: ${v.t_07.toFixed(1)}°C`,
+        "temp-hover-dot"
+    );
 
     // Update opacity of hulls based on hover state
     const highlightType = d?.kg_type || null;
@@ -145,6 +151,11 @@ function updateMonthlyTemperatureHover(d) {
         .attr("d", line)
         .attr("stroke", () => hoverCircleColor(d?.baseColor));
     paths.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("path.chart-hover-line"),
+        () => (d && d.t ? d.t.map((t, i) => `${MONTH_FULL[i]}: ${t.toFixed(1)}°C`).join(", ") : ""),
+        "temp-hover-line"
+    );
 
     // Add individual month markers for easier per-month hover
     const monthPoints = data.length ? months.filter(m => typeof m.temp === "number" && isFinite(m.temp)) : [];
@@ -170,6 +181,11 @@ function updateMonthlyTemperatureHover(d) {
         .attr("stroke", "#fff")
         .attr("stroke-width", 1);
     markers.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("circle.chart-hover-month-marker"),
+        (_, m) => `${MONTH_FULL[m.month - 1]}: ${m.temp.toFixed(1)}°C`,
+        "temp-hover-month"
+    );
 
     // Update opacity of ranges based on hover state
     const highlightType = d?.kg_type || null;
@@ -218,17 +234,10 @@ export function drawMonthlyTemperature() {
     }
 
     const svg = d3.select(svgElement);
-    const rect = svgElement.getBoundingClientRect();
-    const width = Math.max(rect.width, 240) || 240;
-    const height = Math.max(rect.height, 180) || 180;
+    const { width, height, margin, innerWidth, innerHeight } = getDetailChartSize(svgElement, "monthly");
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
-    // ...existing code...
-
-    const margin = { top: 28, right: 20, bottom: 36, left: 44 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
     const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Get all data with valid climate type
@@ -315,14 +324,11 @@ export function drawMonthlyTemperature() {
         .attr("transform", `translate(0,${innerHeight})`)
         .call(d3.axisBottom(x).tickValues(d3.range(1, 13)).tickFormat(d => d));
 
-    // Title
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -12)
-        .attr("font-size", 12)
-        .attr("font-weight", 600)
-        .attr("fill", "#333")
-        .text("Monthly Temperature");
+    appendChartHeading(
+        g,
+        "Monthly Temperature",
+        "Month (x) / Temperature (°C, y)"
+    );
 
     // Color function
     function getColor(d) {
@@ -381,16 +387,10 @@ export function drawTemperatureScatter() {
     }
 
     const svg = d3.select(svgElement);
-    const rect = svgElement.getBoundingClientRect();
-    const width = Math.max(rect.width, 240) || 240;
-    const height = Math.max(rect.height, 180) || 180;
+    const { width, height, margin, innerWidth, innerHeight } = getDetailChartSize(svgElement, "scatter");
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
-
-    const margin = { top: 32, right: 24, bottom: 40, left: 44 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
     const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Filter valid temperature points (January vs July)
@@ -467,6 +467,7 @@ export function drawTemperatureScatter() {
         .on("mouseout", function() {
             hideTooltip();
         });
+    bindTooltipInteraction(g.selectAll(".reference-line"), "y=x reference line", "temp-reference-line");
 
     // Coordinate axes (for scatter plot)
     g.append("g")
@@ -477,14 +478,11 @@ export function drawTemperatureScatter() {
         .attr("transform", `translate(0,${innerHeight})`)
         .call(d3.axisBottom(x).tickValues(tempTicksX));
 
-    // Title
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -16)
-        .attr("font-size", 12)
-        .attr("font-weight", 600)
-        .attr("fill", "#333")
-        .text("Winter (Month 1) vs Summer (Month 7) Temperature");
+    appendChartHeading(
+        g,
+        "Winter vs Summer Temperature",
+        "Month 1 (x, °C) / Month 7 (y, °C)"
+    );
 
     // Color function
     function getColor(d) {

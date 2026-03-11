@@ -1,13 +1,13 @@
-/* =========================================================
+﻿/* =========================================================
    chart-tab-overall.js
    Tab1: Overall climate info with combined temperature & precipitation chart
    ========================================================= */
 
 import {
     MONTH_SHORT, MONTH_FULL, KOPPEN_TEMP, KOPPEN_PRECIP,
-    CHART_TEMP_MIN, CHART_TEMP_MAX, CHART_PRECIP_MAX, MARGIN,
-    tempColor, precipColor, showTooltip, hideTooltip,
-    getChartSize, baseSvg, explainKgType,
+    CHART_TEMP_MIN, CHART_TEMP_MAX, CHART_PRECIP_MAX,
+    tempColor, precipColor, bindTooltipInteraction, shouldUseHoverPreview,
+    getChartSize, baseSvg, appendChartHeading, explainKgType,
     updateCoordinateDisplay,
     dispatcher, STATE, getExportingState, setExportingState
 } from "./chart-common.js";
@@ -26,6 +26,9 @@ const climateCoordLabel = document.getElementById("climate-coord");
 const climateTypeLabel  = document.getElementById("climate-type");
 const climateExplain    = document.getElementById("climate-explain");
 const comboChartSvg     = d3.select("#climateComboChart");
+const EXPORT_FONT_FAMILY = getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-family")
+    .trim() || "Inter, system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Arial, sans-serif";
 
 /* =========================================================
    Lock/Unlock state management
@@ -121,7 +124,7 @@ export function exportChartOnly() {
                 }
                 if (lat == null || lon == null) {
                     const coordText = document.getElementById("climate-coord")?.textContent || "";
-                    const match = coordText.match(/([\\d.]+)°\\s*([NS]),\\s*([\\d.]+)°\\s*([EW])/);
+                    const match = coordText.match(/([\d.]+)°\s*([NS]),\s*([\d.]+)°\s*([EW])/);
                     if (match) {
                         lat = parseFloat(match[1]) * (match[2] === 'S' ? -1 : 1);
                         lon = parseFloat(match[3]) * (match[4] === 'W' ? -1 : 1);
@@ -323,7 +326,7 @@ export function exportPanelAsImage() {
                         const textY = parseFloat(label.getAttribute('y')) || 0;
                         ctx.save();
                         const fontSize = 21;
-                        ctx.font = `bold ${fontSize}px Inter, 'Helvetica Neue', sans-serif`;
+                        ctx.font = `bold ${fontSize}px ${EXPORT_FONT_FAMILY}`;
                         ctx.textAlign = (label.getAttribute('text-anchor') || 'start') === 'middle' ? 'center' : (label.getAttribute('text-anchor') || 'start');
                         const baseline = label.getAttribute('dominant-baseline') || 'alphabetic';
                         ctx.textBaseline = baseline === 'middle' ? 'middle' : (baseline === 'hanging' ? 'top' : 'alphabetic');
@@ -471,15 +474,15 @@ export function setPanelActionVisibility(visible) {
 export function updatePanel(d, withAnimation = false) {
     if (!d) {
         panelHasData = false;
-        climateTypeLabel.textContent = "Hover or search a location";
+        climateTypeLabel.textContent = "Select or search a location";
         climateExplain.innerHTML = `<div class=\"explain-line\"><br></div><div class=\"explain-line\"><br></div><div class=\"explain-line\"><br></div>`;
         renderComboChart(null, withAnimation);
         const statsDiv = document.getElementById("climate-stats");
         if (statsDiv) {
             statsDiv.innerHTML = `
-                <span><span class="stat-label">Annual Mean Temp:</span> <span class="stat-value">–</span></span>
-                <span><span class="stat-label">Temp Range:</span> <span class="stat-value">–</span></span>
-                <span><span class="stat-label">Annual Precip:</span> <span class="stat-value">–</span></span>
+                <span><span class="stat-label">Annual Mean Temp:</span> <span class="stat-value">-</span></span>
+                <span><span class="stat-label">Temp Range:</span> <span class="stat-value">-</span></span>
+                <span><span class="stat-label">Annual Precip:</span> <span class="stat-value">-</span></span>
             `;
         }
         return;
@@ -487,7 +490,7 @@ export function updatePanel(d, withAnimation = false) {
 
     panelHasData = true;
 
-    climateTypeLabel.textContent = d.kg_type || "—";
+    climateTypeLabel.textContent = d.kg_type || "-";
     climateExplain.innerHTML = explainKgType(d.kg_type || "")
         .map(t => `<div class="explain-line">${t}</div>`)
         .join("");
@@ -501,45 +504,37 @@ export function redrawComboChart() {
 /* =========================================================
    Combined temperature & precipitation chart (Tab1)
    ========================================================= */
-// Helper: Show hover guide line and month label
-function showHoverGuide(xPos, monthIndex, hoverLayer, fillColor, innerHeight) {
-    hoverLayer.selectAll(".hover-guide-line, .hover-month-label").remove();
+function showHoverGuide(xPos, hoverLayer, innerHeight) {
+    hoverLayer.selectAll(".hover-guide-line").remove();
     hoverLayer.append("line")
         .attr("class", "hover-guide-line")
-        .attr("x1", xPos).attr("x2", xPos)
-        .attr("y1", 0).attr("y2", innerHeight)
-        .attr("stroke", "#999").attr("stroke-width", 1)
-        .attr("stroke-dasharray", "4,4").attr("opacity", 0.5);
-    // Removed month label above hover line per user request
+        .attr("x1", xPos)
+        .attr("x2", xPos)
+        .attr("y1", 0)
+        .attr("y2", innerHeight)
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "4,4")
+        .attr("opacity", 0.5);
 }
 
-// Helper: Clear hover guides
 function clearHoverGuides(hoverLayer) {
-    hoverLayer.selectAll(".hover-guide-line, .hover-month-label").remove();
+    hoverLayer.selectAll(".hover-guide-line").remove();
 }
 
 export function renderComboChart(d, withAnimation = false) {
     const svgElement = document.getElementById("climateComboChart");
     if (!svgElement) return;
-    
+
     const comboChartSvg = d3.select(svgElement);
     const { innerWidth, innerHeight } = getChartSize();
     const g = baseSvg(comboChartSvg);
 
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -26)
-        .attr("font-size", 12)
-        .attr("font-weight", 600)
-        .attr("fill", "#333333")
-        .text("Temperature & Precipitation");
-
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -12)
-        .attr("font-size", 11)
-        .attr("fill", "#777777")
-        .text("Month (x) · Temp (°C, left) · Precip (mm, right)");
+    appendChartHeading(
+        g,
+        "Temperature & Precipitation",
+        "Month (x) / Temp (°C, left) / Precip (mm, right)"
+    );
 
     const months = d3.range(1, 13);
     const x = d3.scaleBand()
@@ -554,7 +549,6 @@ export function renderComboChart(d, withAnimation = false) {
         .domain([0, CHART_PRECIP_MAX])
         .range([innerHeight, 0]);
 
-    // Grid lines
     g.append("g")
         .attr("class", "chart-grid")
         .selectAll("line")
@@ -563,8 +557,8 @@ export function renderComboChart(d, withAnimation = false) {
         .append("line")
         .attr("x1", 0)
         .attr("x2", innerWidth)
-        .attr("y1", d => yTemp(d))
-        .attr("y2", d => yTemp(d))
+        .attr("y1", value => yTemp(value))
+        .attr("y2", value => yTemp(value))
         .attr("stroke", "#e5e5e5")
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
@@ -577,13 +571,12 @@ export function renderComboChart(d, withAnimation = false) {
         .append("line")
         .attr("y1", 0)
         .attr("y2", innerHeight)
-        .attr("x1", m => x(m) + x.bandwidth() / 2)
-        .attr("x2", m => x(m) + x.bandwidth() / 2)
+        .attr("x1", month => x(month) + x.bandwidth() / 2)
+        .attr("x2", month => x(month) + x.bandwidth() / 2)
         .attr("stroke", "#e5e5e5")
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "2,2");
 
-    // Axes
     g.append("g")
         .attr("class", "chart-axis")
         .call(d3.axisLeft(yTemp).ticks(8));
@@ -598,79 +591,94 @@ export function renderComboChart(d, withAnimation = false) {
 
     if (!d) return;
 
-    // Create a layer for hover effects
     const hoverLayer = g.append("g").attr("class", "hover-effects");
+    const useHoverPreview = shouldUseHoverPreview();
 
-    // Precipitation bars
     const precipBars = g.selectAll(".precip-bar")
         .data(d.p)
         .enter()
         .append("rect")
         .attr("class", "precip-bar")
         .attr("x", (_, i) => x(i + 1))
-        .attr("y", withAnimation ? innerHeight : (v => yPrecip(Math.min(v, CHART_PRECIP_MAX))))
+        .attr("y", withAnimation ? innerHeight : value => yPrecip(Math.min(value, CHART_PRECIP_MAX)))
         .attr("width", x.bandwidth())
-        .attr("height", withAnimation ? 0 : (v => innerHeight - yPrecip(Math.min(v, CHART_PRECIP_MAX))))
+        .attr("height", withAnimation ? 0 : value => innerHeight - yPrecip(Math.min(value, CHART_PRECIP_MAX)))
         .attr("fill", precipColor(d.baseColor))
         .attr("opacity", 0.75)
-        .style("transition", "opacity 0.2s ease")
-        .on("mouseover", function(event, v) {
-            const monthIndex = d.p.indexOf(v);
-            d3.selectAll(".precip-bar").attr("opacity", 0.4);
-            d3.select(this).attr("opacity", 1.0);
-            const xPos = x(monthIndex + 1) + x.bandwidth() / 2;
-            showHoverGuide(xPos, monthIndex, hoverLayer, precipColor(d.baseColor), innerHeight);
-            const aboveMsg = v > CHART_PRECIP_MAX ? " (above chart max)" : "";
-            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm${aboveMsg}`);
-        })
-        .on("mouseout", function(event, v) {
-            d3.selectAll(".precip-bar").attr("opacity", 0.75);
-            clearHoverGuides(hoverLayer);
-            hideTooltip();
-        });
-    
+        .style("transition", "opacity 0.2s ease");
+
+    if (useHoverPreview) {
+        precipBars
+            .on("pointerenter", function(event, value) {
+                const monthIndex = d.p.indexOf(value);
+                d3.selectAll(".precip-bar").attr("opacity", 0.4);
+                d3.select(this).attr("opacity", 1.0);
+                showHoverGuide(x(monthIndex + 1) + x.bandwidth() / 2, hoverLayer, innerHeight);
+            })
+            .on("pointerleave", function() {
+                d3.selectAll(".precip-bar").attr("opacity", 0.75);
+                clearHoverGuides(hoverLayer);
+            });
+    }
+
+    bindTooltipInteraction(
+        precipBars,
+        (_, value) => {
+            const monthIndex = d.p.indexOf(value);
+            const aboveMsg = value > CHART_PRECIP_MAX ? " (above chart max)" : "";
+            return `${MONTH_FULL[monthIndex]}: ${value.toFixed(1)} mm${aboveMsg}`;
+        },
+        "overall-precip-bar"
+    );
+
     if (withAnimation) {
         precipBars
             .transition()
             .duration(400)
             .delay((_, i) => i * 30)
-            .attr("y", v => yPrecip(Math.min(v, CHART_PRECIP_MAX)))
-            .attr("height", v => innerHeight - yPrecip(Math.min(v, CHART_PRECIP_MAX)));
+            .attr("y", value => yPrecip(Math.min(value, CHART_PRECIP_MAX)))
+            .attr("height", value => innerHeight - yPrecip(Math.min(value, CHART_PRECIP_MAX)));
     }
 
-    // Precip above markers
     const precipMarkers = g.selectAll(".precip-above-marker")
         .data(d.p)
         .enter()
         .append("text")
         .attr("class", "precip-above-marker")
         .attr("x", (_, i) => x(i + 1) + x.bandwidth() / 2)
-        .attr("y", v => v > CHART_PRECIP_MAX ? yPrecip(CHART_PRECIP_MAX) + 16 : null)
+        .attr("y", value => value > CHART_PRECIP_MAX ? yPrecip(CHART_PRECIP_MAX) + 16 : null)
         .attr("text-anchor", "middle")
         .attr("font-size", 18)
         .attr("font-weight", "bold")
-        .attr("fill", "#fff")
+        .attr("fill", "#ffffff")
         .attr("opacity", withAnimation ? 0 : 1)
-        .text(v => v > CHART_PRECIP_MAX ? "▲" : "")
-        .style("cursor", "pointer")
-        .style("transition", "font-size 0.2s ease")
-        .on("mouseover", function(event, v) {
-            if (v > CHART_PRECIP_MAX) {
-                const monthIndex = d.p.indexOf(v);
+        .text(value => value > CHART_PRECIP_MAX ? "▲" : "")
+        .style("transition", "font-size 0.2s ease");
+
+    if (useHoverPreview) {
+        precipMarkers
+            .on("pointerenter", function(event, value) {
+                if (value <= CHART_PRECIP_MAX) return;
+                const monthIndex = d.p.indexOf(value);
                 d3.select(this).attr("font-size", 24);
-                const xPos = x(monthIndex + 1) + x.bandwidth() / 2;
-                showHoverGuide(xPos, monthIndex, hoverLayer, precipColor(d.baseColor), innerHeight);
-                showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)} mm (above chart max)`);
-            }
-        })
-        .on("mouseout", function(event, v) {
-            if (v > CHART_PRECIP_MAX) {
+                showHoverGuide(x(monthIndex + 1) + x.bandwidth() / 2, hoverLayer, innerHeight);
+            })
+            .on("pointerleave", function(event, value) {
+                if (value <= CHART_PRECIP_MAX) return;
                 d3.select(this).attr("font-size", 18);
                 clearHoverGuides(hoverLayer);
-                hideTooltip();
-            }
-        });
-    
+            });
+    }
+
+    bindTooltipInteraction(
+        precipMarkers.filter(value => value > CHART_PRECIP_MAX),
+        (_, value) => {
+            const monthIndex = d.p.indexOf(value);
+            return `${MONTH_FULL[monthIndex]}: ${value.toFixed(1)} mm (above chart max)`;
+        },
+        "overall-precip-marker"
+    );
+
     if (withAnimation) {
         precipMarkers
             .transition()
@@ -679,10 +687,9 @@ export function renderComboChart(d, withAnimation = false) {
             .attr("opacity", 1);
     }
 
-    // Temperature line
     const line = d3.line()
         .x((_, i) => x(i + 1) + x.bandwidth() / 2)
-        .y(v => yTemp(Math.max(v, CHART_TEMP_MIN)))
+        .y(value => yTemp(Math.max(value, CHART_TEMP_MIN)))
         .curve(d3.curveMonotoneX);
 
     const tempPath = g.append("path")
@@ -691,12 +698,11 @@ export function renderComboChart(d, withAnimation = false) {
         .attr("stroke", tempColor(d.baseColor))
         .attr("d", line)
         .attr("fill", "none");
-    
-    // Animate line drawing
+
     if (withAnimation) {
         const totalLength = tempPath.node().getTotalLength();
         tempPath
-            .attr("stroke-dasharray", totalLength + " " + totalLength)
+            .attr("stroke-dasharray", `${totalLength} ${totalLength}`)
             .attr("stroke-dashoffset", totalLength)
             .transition()
             .duration(600)
@@ -707,35 +713,43 @@ export function renderComboChart(d, withAnimation = false) {
             });
     }
 
-    // Temperature points
     const tempPoints = g.selectAll(".temp-point")
         .data(d.t)
         .enter()
         .append("circle")
         .attr("class", "temp-point")
         .attr("cx", (_, i) => x(i + 1) + x.bandwidth() / 2)
-        .attr("cy", v => yTemp(Math.max(v, CHART_TEMP_MIN)))
+        .attr("cy", value => yTemp(Math.max(value, CHART_TEMP_MIN)))
         .attr("r", withAnimation ? 0 : 5)
         .attr("fill", tempColor(d.baseColor))
-        .attr("stroke", "#fff")
+        .attr("stroke", "#ffffff")
         .attr("stroke-width", 1.5)
-        .style("cursor", "pointer")
-        .style("transition", "r 0.2s ease")
-        .on("mouseover", function(event, v) {
-            const monthIndex = d.t.indexOf(v);
-            d3.selectAll(".temp-point").attr("r", 5).attr("opacity", 0.5);
-            d3.select(this).attr("r", 8).attr("opacity", 1.0);
-            const xPos = x(monthIndex + 1) + x.bandwidth() / 2;
-            showHoverGuide(xPos, monthIndex, hoverLayer, tempColor(d.baseColor), innerHeight);
-            const belowMsg = v < CHART_TEMP_MIN ? " (below chart min)" : "";
-            showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C${belowMsg}`);
-        })
-        .on("mouseout", function(event, v) {
-            d3.selectAll(".temp-point").attr("r", 5).attr("opacity", 1.0);
-            clearHoverGuides(hoverLayer);
-            hideTooltip();
-        });
-    
+        .style("transition", "r 0.2s ease");
+
+    if (useHoverPreview) {
+        tempPoints
+            .on("pointerenter", function(event, value) {
+                const monthIndex = d.t.indexOf(value);
+                d3.selectAll(".temp-point").attr("r", 5).attr("opacity", 0.5);
+                d3.select(this).attr("r", 8).attr("opacity", 1.0);
+                showHoverGuide(x(monthIndex + 1) + x.bandwidth() / 2, hoverLayer, innerHeight);
+            })
+            .on("pointerleave", function() {
+                d3.selectAll(".temp-point").attr("r", 5).attr("opacity", 1.0);
+                clearHoverGuides(hoverLayer);
+            });
+    }
+
+    bindTooltipInteraction(
+        tempPoints,
+        (_, value) => {
+            const monthIndex = d.t.indexOf(value);
+            const belowMsg = value < CHART_TEMP_MIN ? " (below chart min)" : "";
+            return `${MONTH_FULL[monthIndex]}: ${value.toFixed(1)}°C${belowMsg}`;
+        },
+        "overall-temp-point"
+    );
+
     if (withAnimation) {
         tempPoints
             .transition()
@@ -744,39 +758,45 @@ export function renderComboChart(d, withAnimation = false) {
             .attr("r", 5);
     }
 
-    // Temp below markers
     const tempMarkers = g.selectAll(".temp-below-marker")
         .data(d.t)
         .enter()
         .append("text")
         .attr("class", "temp-below-marker")
         .attr("x", (_, i) => x(i + 1) + x.bandwidth() / 2)
-        .attr("y", v => v < CHART_TEMP_MIN ? yTemp(CHART_TEMP_MIN) - 5 : null)
+        .attr("y", value => value < CHART_TEMP_MIN ? yTemp(CHART_TEMP_MIN) - 5 : null)
         .attr("text-anchor", "middle")
         .attr("font-size", 18)
         .attr("font-weight", "bold")
         .attr("fill", tempColor(d.baseColor))
         .attr("opacity", withAnimation ? 0 : 1)
-        .text(v => v < CHART_TEMP_MIN ? "▼" : "")
-        .style("cursor", "pointer")
-        .style("transition", "font-size 0.2s ease")
-        .on("mouseover", function(event, v) {
-            if (v < CHART_TEMP_MIN) {
-                const monthIndex = d.t.indexOf(v);
+        .text(value => value < CHART_TEMP_MIN ? "▼" : "")
+        .style("transition", "font-size 0.2s ease");
+
+    if (useHoverPreview) {
+        tempMarkers
+            .on("pointerenter", function(event, value) {
+                if (value >= CHART_TEMP_MIN) return;
+                const monthIndex = d.t.indexOf(value);
                 d3.select(this).attr("font-size", 24);
-                const xPos = x(monthIndex + 1) + x.bandwidth() / 2;
-                showHoverGuide(xPos, monthIndex, hoverLayer, tempColor(d.baseColor), innerHeight);
-                showTooltip(event, `${MONTH_FULL[monthIndex]}: ${v.toFixed(1)}°C (below chart min)`);
-            }
-        })
-        .on("mouseout", function(event, v) {
-            if (v < CHART_TEMP_MIN) {
+                showHoverGuide(x(monthIndex + 1) + x.bandwidth() / 2, hoverLayer, innerHeight);
+            })
+            .on("pointerleave", function(event, value) {
+                if (value >= CHART_TEMP_MIN) return;
                 d3.select(this).attr("font-size", 18);
                 clearHoverGuides(hoverLayer);
-                hideTooltip();
-            }
-        });
-    
+            });
+    }
+
+    bindTooltipInteraction(
+        tempMarkers.filter(value => value < CHART_TEMP_MIN),
+        (_, value) => {
+            const monthIndex = d.t.indexOf(value);
+            return `${MONTH_FULL[monthIndex]}: ${value.toFixed(1)}°C (below chart min)`;
+        },
+        "overall-temp-marker"
+    );
+
     if (withAnimation) {
         tempMarkers
             .transition()
@@ -785,16 +805,15 @@ export function renderComboChart(d, withAnimation = false) {
             .attr("opacity", 1);
     }
 
-    // Stats
     const statsDiv = document.getElementById("climate-stats");
     if (statsDiv && d) {
-        const meanTemp = d.t && d.t.length ? (d.t.reduce((a, b) => a + b, 0) / d.t.length) : null;
-        const tempRange = d.t && d.t.length ? (Math.max(...d.t) - Math.min(...d.t)) : null;
-        const totalPrecip = d.p && d.p.length ? d.p.reduce((a, b) => a + b, 0) : null;
+        const meanTemp = d.t?.length ? d.t.reduce((a, b) => a + b, 0) / d.t.length : null;
+        const tempRange = d.t?.length ? Math.max(...d.t) - Math.min(...d.t) : null;
+        const totalPrecip = d.p?.length ? d.p.reduce((a, b) => a + b, 0) : null;
         statsDiv.innerHTML = `
-            <span><span class=\"stat-label\">Annual Mean Temp:</span> <span class=\"stat-value\">${meanTemp !== null ? meanTemp.toFixed(1) + '°C' : '–'}</span></span>
-            <span><span class=\"stat-label\">Temp Range:</span> <span class=\"stat-value\">${tempRange !== null ? tempRange.toFixed(1) + '°C' : '–'}</span></span>
-            <span><span class=\"stat-label\">Annual Precip:</span> <span class=\"stat-value\">${totalPrecip !== null ? totalPrecip.toFixed(0) + ' mm' : '–'}</span></span>
+            <span><span class="stat-label">Annual Mean Temp:</span> <span class="stat-value">${meanTemp !== null ? `${meanTemp.toFixed(1)}°C` : "-"}</span></span>
+            <span><span class="stat-label">Temp Range:</span> <span class="stat-value">${tempRange !== null ? `${tempRange.toFixed(1)}°C` : "-"}</span></span>
+            <span><span class="stat-label">Annual Precip:</span> <span class="stat-value">${totalPrecip !== null ? `${totalPrecip.toFixed(0)} mm` : "-"}</span></span>
         `;
     }
 }
@@ -803,23 +822,29 @@ export function renderComboChart(d, withAnimation = false) {
    Tab1 Event Handlers
    ========================================================= */
 export function initOverallTab() {
-    // Redraw on lock/unlock
     dispatcher.on("lock.overallTab", () => {
-        if (document.getElementById('tab-overall')?.classList.contains('active')) {
+        if (document.getElementById("tab-overall")?.classList.contains("active")) {
             setTimeout(() => {
-                updatePanel(LOCKED_DATA, true); // With animation on lock
+                updatePanel(LOCKED_DATA, true);
             }, 0);
         }
     });
 
     dispatcher.on("unlock.overallTab", () => {
         hoverDatum = null;
-        if (document.getElementById('tab-overall')?.classList.contains('active')) {
-            // Tab1 is active and was just unlocked, show empty state
-            updatePanel(null, false); // No animation when clearing
+        if (document.getElementById("tab-overall")?.classList.contains("active")) {
+            updatePanel(null, false);
         }
     });
 
-    // Note: Hover events are handled centrally in chart.js to optimize performance
-    // Only the active tab's update functions are called
+    const panelBody = document.getElementById("panel-body");
+    if (panelBody && window.ResizeObserver) {
+        const resizeObserver = new ResizeObserver(() => {
+            if (!document.getElementById("tab-overall")?.classList.contains("active")) return;
+            setTimeout(() => {
+                updatePanel(PANEL_LOCKED ? LOCKED_DATA : hoverDatum, false);
+            }, 0);
+        });
+        resizeObserver.observe(panelBody);
+    }
 }

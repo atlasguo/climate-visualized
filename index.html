@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -9,6 +9,10 @@
     <meta charset="utf-8" />
     <title>Climate Visualized</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" />
 
     <!-- App icon -->
     <link rel="icon" href="assets/icon.png" type="image/png" />
@@ -29,132 +33,149 @@
     <!-- =========================================================
          Root application container
          ========================================================= -->
-    <div id="app">
+    <div id="app" data-layout="desktop">
 
         <!-- =====================================================
              Left information and chart panel
              Displays climate metadata and linked charts on hover
              ===================================================== -->
         <div id="panel-left" class="panel">
-            <div class="panel-hint">Zoom/pan to explore climates. Click to lock/unlock.</div>
-            <div id="climate-coord"></div>
-            <div class="panel-tabs">
-                <button class="panel-tab active" data-target="overall">Overall</button>
-                <button class="panel-tab" data-target="temperature">Temperature</button>
-                <button class="panel-tab" data-target="precipitation">Precipitation</button>
+            <div class="mobile-sheet-header">
+                <div class="mobile-sheet-handle" aria-hidden="true"></div>
+                <div class="mobile-sheet-summary">
+                    <div id="mobile-sheet-title">Tap the map to inspect climate</div>
+                    <div id="mobile-sheet-subtitle">Select a location to open charts</div>
+                </div>
+                <button id="mobile-sheet-toggle" type="button" class="mobile-sheet-toggle" aria-expanded="false"
+                    aria-controls="panel-left">
+                    Open
+                </button>
             </div>
-            <div class="tab-panels">
-                <div id="tab-overall" class="tab-panel active">
-                    <div id="panel-body" class="panel-body">
-                        <div class="panel-header">
 
-                            <div class="panel-title">Köppen Climate Classification</div>
-                            <div id="climate-type">—</div>
-                            <div id="climate-explain"></div>
+            <div class="panel-scroll">
+                <div class="panel-hint">Zoom/pan to explore climates. Click to lock/unlock.</div>
+                <div id="climate-coord"></div>
+                <div class="panel-tabs">
+                    <button class="panel-tab active" data-target="overall">Overall</button>
+                    <button class="panel-tab" data-target="temperature">Temperature</button>
+                    <button class="panel-tab" data-target="precipitation">Precipitation</button>
+                </div>
+                <div class="tab-panels">
+                    <div id="tab-overall" class="tab-panel active">
+                        <div id="panel-body" class="panel-body">
+                            <div class="panel-header">
+                                <div class="panel-title">Koppen Climate Classification</div>
+                                <div id="climate-type">-</div>
+                                <div id="climate-explain"></div>
+                            </div>
+
+                            <!-- Combined temperature and precipitation chart -->
+                            <svg id="climateComboChart"></svg>
+                            <div id="climate-stats" class="climate-stats"></div>
+
+                            <!-- Action buttons -->
+                            <div class="panel-action-row">
+                                <button id="panel-export-chart-btn" class="panel-export-btn"
+                                    title="Export chart as image" disabled aria-disabled="true">
+                                    Export Chart
+                                </button>
+                                <button id="panel-export-map-btn" class="panel-export-btn" title="Export map as image"
+                                    disabled aria-disabled="true">
+                                    Export Map
+                                </button>
+                                <button id="panel-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                                    aria-disabled="true">
+                                    Unlock
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="tab-temperature" class="tab-panel">
+                        <svg id="temperatureScatter"></svg>
+                        <svg id="monthlyTemperature"></svg>
+                        <div class="hemisphere-month-label">
+                            <span class="hemisphere-month-part">For Northern Hemisphere, Month 1 = January</span>
+                            <span class="hemisphere-month-part">For Southern Hemisphere, Month 1 = July</span>
                         </div>
 
-                        <!-- Combined temperature and precipitation chart -->
-                        <svg id="climateComboChart"></svg>
-                        <div id="climate-stats" class="climate-stats"></div>
-
                         <!-- Action buttons -->
-                        <div class="panel-action-row">
-                            <button id="panel-export-chart-btn" class="panel-export-btn" title="Export chart as image"
-                                disabled aria-disabled="true">
+                        <div class="panel-action-row" id="temperature-action-row">
+                            <button id="temperature-export-chart-btn" class="panel-export-btn"
+                                title="Export chart as image" disabled aria-disabled="true">
                                 Export Chart
                             </button>
-                            <button id="panel-export-map-btn" class="panel-export-btn" title="Export map as image"
+                            <button id="temperature-export-map-btn" class="panel-export-btn" title="Export map as image"
                                 disabled aria-disabled="true">
                                 Export Map
                             </button>
-                            <button id="panel-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                            <button id="temperature-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
+                                aria-disabled="true">
+                                Unlock
+                            </button>
+                        </div>
+                    </div>
+                    <div id="tab-precipitation" class="tab-panel">
+                        <svg id="precipitationScatter"></svg>
+                        <svg id="monthlyPrecipitation"></svg>
+                        <div class="hemisphere-month-label">
+                            <span class="hemisphere-month-part">For Northern Hemisphere, Month 1 = January</span>
+                            <span class="hemisphere-month-part">For Southern Hemisphere, Month 1 = July</span>
+                        </div>
+
+                        <!-- Action buttons -->
+                        <div class="panel-action-row" id="precipitation-action-row">
+                            <button id="precipitation-export-chart-btn" class="panel-export-btn"
+                                title="Export chart as image" disabled aria-disabled="true">
+                                Export Chart
+                            </button>
+                            <button id="precipitation-export-map-btn" class="panel-export-btn"
+                                title="Export map as image" disabled aria-disabled="true">
+                                Export Map
+                            </button>
+                            <button id="precipitation-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
                                 aria-disabled="true">
                                 Unlock
                             </button>
                         </div>
                     </div>
                 </div>
-                <div id="tab-temperature" class="tab-panel">
-
-                    <div class="hemisphere-month-label">
-                        Northern Hemisphere: Month 1 = Jan;&nbsp&nbsp Southern Hemisphere: Month 1 = Jul
+                <div id="shared-panel-metadata" class="panel-metadata">
+                    <div class="metadata-line">
+                        <a href="https://cartoguophy.com/maps/climate_visualized" target="_blank"
+                            rel="noopener">
+                            About this map
+                        </a>
+                        ·
+                        <a href="https://cartoguophy.com/maps/koppen.html" target="_blank" rel="noopener">
+                            Poster version
+                        </a>
+                        ·
+                        <a href="https://www.youtube.com/watch?v=45v7BfYmoEM" target="_blank"
+                            rel="noopener">
+                            Demo video
+                        </a>
                     </div>
-                    <svg id="temperatureScatter"></svg>
-                    <svg id="monthlyTemperature"></svg>
 
-                    <!-- Action buttons -->
-                    <div class="panel-action-row" id="temperature-action-row">
-                        <button id="temperature-export-chart-btn" class="panel-export-btn" title="Export chart as image"
-                            disabled aria-disabled="true">
-                            Export Chart
-                        </button>
-                        <button id="temperature-export-map-btn" class="panel-export-btn" title="Export map as image"
-                            disabled aria-disabled="true">
-                            Export Map
-                        </button>
-                        <button id="temperature-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
-                            aria-disabled="true">
-                            Unlock
-                        </button>
+                    <div class="metadata-line">
+                        Data sources:
+                        <a href="https://www.nature.com/articles/sdata2018214" target="_blank"
+                            rel="noopener">
+                            Beck et al. (2018)
+                        </a>
+                        ·
+                        <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener">
+                            Natural Earth
+                        </a>
                     </div>
-                </div>
-                <div id="tab-precipitation" class="tab-panel">
 
-                    <div class="hemisphere-month-label">
-                        Northern Hemisphere: Month 1 = Jan;&nbsp&nbsp Southern Hemisphere: Month 1 = Jul
-                    </div>
-                    <svg id="precipitationScatter"></svg>
-                    <svg id="monthlyPrecipitation"></svg>
-
-                    <!-- Action buttons -->
-                    <div class="panel-action-row" id="precipitation-action-row">
-                        <button id="precipitation-export-chart-btn" class="panel-export-btn"
-                            title="Export chart as image" disabled aria-disabled="true">
-                            Export Chart
-                        </button>
-                        <button id="precipitation-export-map-btn" class="panel-export-btn" title="Export map as image"
-                            disabled aria-disabled="true">
-                            Export Map
-                        </button>
-                        <button id="precipitation-unlock-btn" class="panel-unlock-btn" title="Unlock panel" disabled
-                            aria-disabled="true">
-                            Unlock
-                        </button>
+                    <div class="metadata-line">
+                        Design by Atlas Guo (2026) ©
+                        <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
+                            CartoGuophy.com
+                        </a>
                     </div>
                 </div>
             </div>
-
-            <!-- Data source and author information -->
-            <div class="panel-metadata">
-                <div class="metadata-line">
-                    Optimized for desktop viewing on large screens.
-                </div>
-
-                <div class="metadata-line">
-                    Cartography by Atlas Guo (2026） ·
-                    <a href="https://cartoguophy.com/maps/climate_visualized" target="_blank" rel="noopener">
-                        About this map
-                    </a>
-                </div>
-
-                <div class="metadata-line">
-                    Data Source:
-                    <a href="https://www.nature.com/articles/sdata2018214" target="_blank" rel="noopener">
-                        Beck et al. (2018)
-                    </a>
-                    ·
-                    <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener">
-                        Natural Earth
-                    </a>
-                </div>
-
-                <div class="metadata-line">
-                    © <a href="https://cartoguophy.com/" target="_blank" rel="noopener">
-                        CartoGuophy.com
-                    </a>
-                </div>
-            </div>
-
         </div>
 
         <!-- =====================================================
@@ -167,61 +188,69 @@
                 <input type="text" id="search-input" class="search-input" placeholder="Search location..."
                     autocomplete="off" />
                 <button id="search-clear" class="search-clear-btn" title="Clear search">
-                    ✕
+                    ×
                 </button>
                 <div id="search-suggestions" class="search-suggestions"></div>
             </div>
 
-            <!-- Symbol style selector (top-right) -->
-            <div class="symbol-selector">
-                <div class="selector-label">Mode</div>
-                <div class="radio-group">
-                    <label class="radio-item">
-                        <input type="radio" name="symbol-style" value="point" id="symbol-point" checked>
-                        <div class="radio-content">
-                            <span class="radio-title">Point</span>
-                        </div>
+            <button id="map-options-toggle" class="map-options-toggle" type="button" aria-expanded="false"
+                aria-controls="map-options-popover">
+                Map Options
+            </button>
+
+            <div id="map-options-popover" aria-hidden="true">
+                <!-- Symbol style selector -->
+                <div class="symbol-selector">
+                    <div class="selector-label">Mode</div>
+                    <div class="radio-group">
+                        <label class="radio-item">
+                            <input type="radio" name="symbol-style" value="point" id="symbol-point" checked>
+                            <div class="radio-content">
+                                <span class="radio-title">Point</span>
+                            </div>
+                        </label>
+                        <label class="radio-item">
+                            <input type="radio" name="symbol-style" value="glyph" id="symbol-glyph">
+                            <div class="radio-content">
+                                <span class="radio-title">Climate Glyph</span>
+                                <span class="radio-desc">
+                                    - Outline: temperature<br>
+                                    - Inner: precipitation<br>
+                                    - January at top (clockwise)
+                                </span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Map display toggles -->
+                <div class="map-toggles">
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-geolines" checked>
+                        <span>Geographic Line</span>
                     </label>
-                    <label class="radio-item">
-                        <input type="radio" name="symbol-style" value="glyph" id="symbol-glyph">
-                        <div class="radio-content">
-                            <span class="radio-title">Climate Glyph</span>
-                            <span class="radio-desc">
-                                - Outline: temperature<br>
-                                - Inner: precipitation<br>
-                                - January at top (clockwise)</span>
-                        </div>
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-graticules" checked>
+                        <span>Graticule</span>
+                    </label>
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-borders" checked>
+                        <span>Country</span>
+                    </label>
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-ocean" checked>
+                        <span>Ocean</span>
+                    </label>
+                    <span class="toggle-break" aria-hidden="true"></span>
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-city-labels">
+                        <span>City Label</span>
+                    </label>
+                    <label class="toggle-item">
+                        <input type="checkbox" id="toggle-country-labels">
+                        <span>Country Label</span>
                     </label>
                 </div>
-            </div>
-
-            <!-- Map display toggles -->
-            <div class="map-toggles">
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-geolines" checked>
-                    <span>Geographic Line</span>
-                </label>
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-graticules" checked>
-                    <span>Graticule</span>
-                </label>
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-borders" checked>
-                    <span>Country</span>
-                </label>
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-ocean" checked>
-                    <span>Ocean</span>
-                </label>
-                <span class="toggle-break" aria-hidden="true"></span>
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-city-labels">
-                    <span>City Label</span>
-                </label>
-                <label class="toggle-item">
-                    <input type="checkbox" id="toggle-country-labels">
-                    <span>Country Label</span>
-                </label>
             </div>
 
             <!-- Zoom controls -->
@@ -254,7 +283,7 @@
         <div id="loading-overlay">
             <div class="loading-box">
                 <div class="spinner"></div>
-                <div class="loading-text">Loading…</div>
+                <div class="loading-text">Loading...</div>
             </div>
         </div>
 

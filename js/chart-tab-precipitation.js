@@ -5,11 +5,12 @@
 
 import {
     MONTH_FULL,
-    precipColor, showTooltip, hideTooltip,
+    precipColor, showTooltip, hideTooltip, bindTooltipInteraction, getDetailChartSize,
     RANGE_OPACITY_UNLOCKED,
     RANGE_OPACITY_LOCKED_ACTIVE,
     RANGE_OPACITY_LOCKED_DIM,
     hoverCircleColor,
+    appendChartHeading,
     getActiveDatumHelper,
     updateCoordinateDisplay,
     dispatcher, STATE
@@ -68,6 +69,11 @@ function updatePrecipitationScatterHover(d) {
         .attr("cy", v => y(v.p_07))
         .attr("fill", v => hoverCircleColor(v.baseColor));
     dots.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("circle"),
+        (_, v) => `Jan: ${v.p_01.toFixed(1)} mm, Jul: ${v.p_07.toFixed(1)} mm`,
+        "precip-hover-dot"
+    );
 
     // Update opacity of hulls based on hover state
     const highlightType = d?.kg_type || null;
@@ -146,6 +152,11 @@ function updateMonthlyPrecipitationHover(d) {
         .attr("d", line)
         .attr("stroke", () => hoverCircleColor(d?.baseColor));
     paths.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("path.chart-hover-line"),
+        () => (d && d.p ? d.p.map((p, i) => `${MONTH_FULL[i]}: ${p.toFixed(1)} mm`).join(", ") : ""),
+        "precip-hover-line"
+    );
 
     // Add individual month markers for easier per-month hover
     const monthPoints = data.length ? months : [];
@@ -171,6 +182,11 @@ function updateMonthlyPrecipitationHover(d) {
         .attr("stroke", "#fff")
         .attr("stroke-width", 1);
     markers.exit().remove();
+    bindTooltipInteraction(
+        layer.selectAll("circle.chart-hover-month-marker"),
+        (_, m) => `${MONTH_FULL[m.month - 1]}: ${m.precip.toFixed(1)} mm`,
+        "precip-hover-month"
+    );
 
     // Update opacity of ranges based on hover state
     const highlightType = d?.kg_type || null;
@@ -219,17 +235,10 @@ export function drawMonthlyPrecipitation() {
     }
 
     const svg = d3.select(svgElement);
-    const rect = svgElement.getBoundingClientRect();
-    const width = Math.max(rect.width, 240) || 240;
-    const height = Math.max(rect.height, 180) || 180;
+    const { width, height, margin, innerWidth, innerHeight } = getDetailChartSize(svgElement, "monthly");
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
-    // ...existing code...
-
-    const margin = { top: 28, right: 20, bottom: 36, left: 44 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
     const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Get all data with valid climate type
@@ -337,14 +346,11 @@ export function drawMonthlyPrecipitation() {
         .attr("transform", `translate(0,${innerHeight})`)
         .call(d3.axisBottom(x).tickValues(d3.range(1, 13)).tickFormat(d => d));
 
-    // Title
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -12)
-        .attr("font-size", 12)
-        .attr("font-weight", 600)
-        .attr("fill", "#333")
-        .text("Monthly Precipitation");
+    appendChartHeading(
+        g,
+        "Monthly Precipitation",
+        "Month (x) / Precipitation (mm, y)"
+    );
 
     // Color function
     function getColor(d) {
@@ -404,16 +410,10 @@ export function drawPrecipitationScatter() {
     }
 
     const svg = d3.select(svgElement);
-    const rect = svgElement.getBoundingClientRect();
-    const width = Math.max(rect.width, 240) || 240;
-    const height = Math.max(rect.height, 180) || 180;
+    const { width, height, margin, innerWidth, innerHeight } = getDetailChartSize(svgElement, "scatter");
 
     svg.selectAll("*").remove();
     svg.attr("width", width).attr("height", height);
-
-    const margin = { top: 32, right: 24, bottom: 40, left: 44 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
     const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
 
     // Filter valid precipitation points (January vs July) - must be greater than 0 for log scale
@@ -496,6 +496,7 @@ export function drawPrecipitationScatter() {
         .on("mouseout", function() {
             hideTooltip();
         });
+    bindTooltipInteraction(g.selectAll(".reference-line"), "y=x reference line", "precip-reference-line");
 
     // Coordinate axes (for scatter plot) with equally-spaced precipitation ticks
     g.append("g")
@@ -506,14 +507,11 @@ export function drawPrecipitationScatter() {
         .attr("transform", `translate(0,${innerHeight})`)
         .call(d3.axisBottom(x).tickValues(precipitationTicksX).tickFormat(d => d));
 
-    // Title
-    g.append("text")
-        .attr("x", 0)
-        .attr("y", -16)
-        .attr("font-size", 12)
-        .attr("font-weight", 600)
-        .attr("fill", "#333")
-        .text("Winter (Month 1) vs Summer (Month 7) Precipitation");
+    appendChartHeading(
+        g,
+        "Winter vs Summer Precipitation",
+        "Month 1 (x, mm) / Month 7 (y, mm)"
+    );
 
     // Color function
     function getColor(d) {
