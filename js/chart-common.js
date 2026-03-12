@@ -13,7 +13,7 @@ import {
 } from "./shared.js";
 
 const OVERALL_MARGIN_DESKTOP = { top: 48, right: 32, bottom: 48, left: 42 };
-const OVERALL_MARGIN_MOBILE = { top: 34, right: 14, bottom: 30, left: 34 };
+const OVERALL_MARGIN_MOBILE = { top: 34, right: 30, bottom: 30, left: 34 };
 const DETAIL_MONTHLY_MARGIN_DESKTOP = { top: 42, right: 20, bottom: 36, left: 44 };
 const DETAIL_MONTHLY_MARGIN_MOBILE = { top: 34, right: 14, bottom: 30, left: 34 };
 const DETAIL_SCATTER_MARGIN_DESKTOP = { top: 42, right: 24, bottom: 40, left: 44 };
@@ -182,7 +182,7 @@ function updateMobileSheetSummary(d) {
 
     if (!d) {
         title.classList.add("mobile-sheet-title-empty");
-        title.textContent = "Select or search a location to explore climates.";
+        title.textContent = "Select or search a location to explore the climates.";
         subtitle.textContent = "";
         return;
     }
