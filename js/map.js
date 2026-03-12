@@ -2670,6 +2670,12 @@ function showGlyphAutoSwitchToast() {
             "<div class=\"glyph-toast-body\">To switch back, click Map Options (top right) &gt; Mode &gt; Point.</div>",
             "<button type=\"button\" class=\"lock-toast-btn glyph-toast-dismiss\">Got it</button>"
         ].join("");
+        const blockToastEvent = (event) => {
+            event.stopPropagation();
+        };
+        toast.addEventListener("click", blockToastEvent);
+        toast.addEventListener("pointerdown", blockToastEvent);
+        toast.addEventListener("touchstart", blockToastEvent, { passive: true });
         toast.querySelector(".glyph-toast-dismiss")?.addEventListener("click", (event) => {
             event.stopPropagation();
             toast.classList.remove("show");
