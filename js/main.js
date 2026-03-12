@@ -126,7 +126,7 @@ function setupSymbolSelector() {
         return;
     }
 
-    window.setSymbolStyleSelection = (nextStyle) => {
+    window.setSymbolStyleSelection = (nextStyle, source = "manual") => {
         const target = document.querySelector(`input[name="symbol-style"][value="${nextStyle}"]`);
         if (!target) {
             return false;
@@ -134,14 +134,14 @@ function setupSymbolSelector() {
         radioButtons.forEach(radio => {
             radio.checked = radio === target;
         });
-        dispatcher.call("symbolStyleChanged", null, nextStyle);
+        dispatcher.call("symbolStyleChanged", null, nextStyle, { source });
         return true;
     };
 
     radioButtons.forEach(radio => {
         radio.addEventListener("change", () => {
             const selectedStyle = document.querySelector('input[name="symbol-style"]:checked').value;
-            dispatcher.call("symbolStyleChanged", null, selectedStyle);
+            dispatcher.call("symbolStyleChanged", null, selectedStyle, { source: "manual" });
         });
     });
 }

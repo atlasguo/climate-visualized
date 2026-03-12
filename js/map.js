@@ -75,16 +75,21 @@ let hoveredDatum = null;
 let oceanCache = null;
 let countriesCache = null;
 let climateLayerCache = null;
+let labelLayerCache = null;
 let oceanCacheCtx = null;
 let countriesCacheCtx = null;
 let climateLayerCacheCtx = null;
+let labelLayerCacheCtx = null;
 let lastOceanCacheZoom = null;
 let lastCountriesCacheZoom = null;
 let climateLayerKey = "";
+let labelLayerKey = "";
 let interactionSnapshotCanvas = null;
 let interactionSnapshotCtx = null;
+let interactionSnapshotDpr = CANVAS_DPR;
 let zoomStartTransform = null;
 let isInteractingBitmapMode = false;
+let renderQuality = "settled";
 let projectedCacheVersion = 0;
 let renderEpoch = 0;
 let pendingRefineJob = null;
@@ -94,6 +99,8 @@ let mapBusyLoadingVisible = false;
 let pendingMobileLockFocusRaf = null;
 let previousGlyphAutoSwitchRelativeZoom = 1;
 const GLYPH_AUTO_SWITCH_RELATIVE_THRESHOLD = 8;
+const RENDER_QUALITY_INTERACTIVE = "interactive";
+const RENDER_QUALITY_SETTLED = "settled";
 const CITY_LABEL_CAPITAL_COLOR = "#111111";
 const CITY_LABEL_NON_CAPITAL_COLOR = "#8d949b";
 const CITY_LABEL_HALO = "rgba(255, 255, 255, 0.75)";
@@ -135,6 +142,11 @@ const HOVER_RING_SHADOW_OFFSET_Y = 1.5;
 const MOBILE_LOCK_FOCUS_VERTICAL_MARGIN_PX = 18;
 const MOBILE_LOCK_FOCUS_HORIZONTAL_MARGIN_PX = 24;
 const MOBILE_LOCK_FOCUS_SCALE_CANDIDATES = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+const INTERACTION_SNAPSHOT_DPR_MOBILE_MAX = 1.1;
+const INTERACTION_SNAPSHOT_DPR_DESKTOP_MAX = 1.35;
+const INTERACTION_GLYPH_JAN_LINE_MIN_RADIUS = 5;
+const LABEL_CACHE_GRID_SIZE = 160;
+const visibleClimateDataScratch = [];
 
 function getViewportProjectedBounds(transform = STATE.zoomTransform) {
     const k = transform?.k || 1;
@@ -381,7 +393,28 @@ function makeTransformSnapshot(transform = STATE.zoomTransform) {
 }
 
 function makeClimateLayerKey(transform, lockedType, hoveredType) {
-    return `${transform.k}|${transform.x}|${transform.y}|${symbolStyle}|${lockedType || ""}|${hoveredType || ""}`;
+    return `${renderQuality}|${transform.k}|${transform.x}|${transform.y}|${symbolStyle}|${lockedType || ""}|${hoveredType || ""}`;
+}
+
+function getLabelZoomBand(k) {
+    if (k < 0.9) return "xs";
+    if (k < 1.3) return "sm";
+    if (k < 2.0) return "md";
+    if (k < 3.5) return "lg";
+    return "xl";
+}
+
+function makeLabelLayerKey(transform = STATE.zoomTransform) {
+    return [
+        getLabelZoomBand(transform.k),
+        transform.k,
+        transform.x,
+        transform.y,
+        showCityLabels ? 1 : 0,
+        showCountryLabels ? 1 : 0,
+        showGraticules ? 1 : 0,
+        showGeoLines ? 1 : 0
+    ].join("|");
 }
 
 function hasOceanCache(transform = STATE.zoomTransform) {
@@ -396,11 +429,16 @@ function hasClimateLayerCache(transform = STATE.zoomTransform, lockedType = null
     return !!climateLayerCache && climateLayerKey === makeClimateLayerKey(transform, lockedType, hoveredType);
 }
 
+function hasLabelLayerCache(transform = STATE.zoomTransform) {
+    return !!labelLayerCache && labelLayerKey === makeLabelLayerKey(transform);
+}
+
 // Invalidate caches (force regeneration on next draw)
 function invalidateCaches() {
     lastOceanCacheZoom = null;
     lastCountriesCacheZoom = null;
     climateLayerKey = "";
+    labelLayerKey = "";
 }
 
 // Initialize offscreen canvases
@@ -417,11 +455,15 @@ function initCaches() {
         climateLayerCache = document.createElement('canvas');
         climateLayerCacheCtx = climateLayerCache.getContext('2d');
     }
+    if (!labelLayerCache) {
+        labelLayerCache = document.createElement('canvas');
+        labelLayerCacheCtx = labelLayerCache.getContext('2d');
+    }
 }
 
 // Resize caches to match main canvas
 function resizeCaches() {
-    if (!oceanCache || !countriesCache || !climateLayerCache) return;
+    if (!oceanCache || !countriesCache || !climateLayerCache || !labelLayerCache) return;
     const w = canvas.width;
     const h = canvas.height;
     if (oceanCache.width !== w || oceanCache.height !== h) {
@@ -435,6 +477,10 @@ function resizeCaches() {
     if (climateLayerCache.width !== w || climateLayerCache.height !== h) {
         climateLayerCache.width = w;
         climateLayerCache.height = h;
+    }
+    if (labelLayerCache.width !== w || labelLayerCache.height !== h) {
+        labelLayerCache.width = w;
+        labelLayerCache.height = h;
     }
 }
 
@@ -564,7 +610,7 @@ function drawClimateLayerToCache(transform = STATE.zoomTransform, lockedType = n
     if (symbolStyle === "point") {
         drawPointsBatchOnContext(climateLayerCacheCtx, transform, lockedType, hoveredType);
     } else {
-        drawGlyphsBatchOnContext(climateLayerCacheCtx, transform, lockedType, hoveredType);
+        drawGlyphsBatchOnContext(climateLayerCacheCtx, transform, lockedType, hoveredType, renderQuality);
     }
     climateLayerCacheCtx.globalAlpha = 1.0;
     climateLayerKey = makeClimateLayerKey(transform, lockedType, hoveredType);
@@ -674,6 +720,13 @@ function tempColorForMapPoint(baseColor) {
     return hsl.formatHex();
 }
 
+function getInteractionSnapshotDpr() {
+    return Math.min(
+        CANVAS_DPR,
+        isMobileLayout() ? INTERACTION_SNAPSHOT_DPR_MOBILE_MAX : INTERACTION_SNAPSHOT_DPR_DESKTOP_MAX
+    );
+}
+
 function initInteractionSnapshot() {
     if (!interactionSnapshotCanvas) {
         interactionSnapshotCanvas = document.createElement("canvas");
@@ -684,9 +737,12 @@ function initInteractionSnapshot() {
 function resizeInteractionSnapshot() {
     initInteractionSnapshot();
     if (!interactionSnapshotCanvas) return;
-    if (interactionSnapshotCanvas.width !== canvas.width || interactionSnapshotCanvas.height !== canvas.height) {
-        interactionSnapshotCanvas.width = canvas.width;
-        interactionSnapshotCanvas.height = canvas.height;
+    interactionSnapshotDpr = getInteractionSnapshotDpr();
+    const width = Math.max(1, Math.round(STATE.width * interactionSnapshotDpr));
+    const height = Math.max(1, Math.round(STATE.height * interactionSnapshotDpr));
+    if (interactionSnapshotCanvas.width !== width || interactionSnapshotCanvas.height !== height) {
+        interactionSnapshotCanvas.width = width;
+        interactionSnapshotCanvas.height = height;
     }
 }
 
@@ -700,11 +756,11 @@ function beginInteractionBitmapMode() {
 
     interactionSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
     interactionSnapshotCtx.clearRect(0, 0, interactionSnapshotCanvas.width, interactionSnapshotCanvas.height);
-    interactionSnapshotCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    interactionSnapshotCtx.setTransform(interactionSnapshotDpr, 0, 0, interactionSnapshotDpr, 0, 0);
     if (symbolStyle === "point") {
         drawPointsBatchOnContext(interactionSnapshotCtx, zoomStartTransform, lockedType, hoveredType);
     } else {
-        drawGlyphsBatchOnContext(interactionSnapshotCtx, zoomStartTransform, lockedType, hoveredType);
+        drawGlyphsBatchOnContext(interactionSnapshotCtx, zoomStartTransform, lockedType, hoveredType, RENDER_QUALITY_INTERACTIVE);
     }
     interactionSnapshotCtx.setTransform(1, 0, 0, 1, 0, 0);
     interactionSnapshotCtx.globalAlpha = 1.0;
@@ -733,8 +789,8 @@ function drawInteractionBitmap() {
         interactionSnapshotCanvas,
         tx * CANVAS_DPR,
         ty * CANVAS_DPR,
-        interactionSnapshotCanvas.width * scale,
-        interactionSnapshotCanvas.height * scale
+        interactionSnapshotCanvas.width * scale * (CANVAS_DPR / interactionSnapshotDpr),
+        interactionSnapshotCanvas.height * scale * (CANVAS_DPR / interactionSnapshotDpr)
     );
     return true;
 }
@@ -1267,9 +1323,9 @@ function getPopulationThreshold(k) {
     return 0;
 }
 
-function drawCityLabels(transform = STATE.zoomTransform, collision = null) {
+function drawCityLabels(transform = STATE.zoomTransform, collision = null, drawCtx = ctx) {
     if (!showCityLabels || !CITY_LABELS?.length || !STATE.projection) return;
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    drawCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     const { x, y, k } = transform;
     const rankLimit = getLabelRankLimit(k);
     const popThreshold = getPopulationThreshold(k);
@@ -1345,22 +1401,22 @@ function drawCityLabels(transform = STATE.zoomTransform, collision = null) {
         return false;
     };
 
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.strokeStyle = CITY_LABEL_HALO;
-    ctx.lineWidth = CITY_LABEL_HALO_WIDTH;
-    ctx.lineJoin = "round";
+    drawCtx.textAlign = "center";
+    drawCtx.textBaseline = "middle";
+    drawCtx.strokeStyle = CITY_LABEL_HALO;
+    drawCtx.lineWidth = CITY_LABEL_HALO_WIDTH;
+    drawCtx.lineJoin = "round";
 
     for (const d of visible) {
         const fontSize = getCityLabelFontSize(d._rank, k);
-        ctx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
+        drawCtx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
         const label = d.name;
         if (!label) continue;
         const isCapital = d._isCapital;
-        ctx.fillStyle = isCapital ? CITY_LABEL_CAPITAL_COLOR : CITY_LABEL_NON_CAPITAL_COLOR;
+        drawCtx.fillStyle = isCapital ? CITY_LABEL_CAPITAL_COLOR : CITY_LABEL_NON_CAPITAL_COLOR;
         const sx = d.px * k + x;
         const sy = d.py * k + y;
-        const textWidth = ctx.measureText(label).width;
+        const textWidth = drawCtx.measureText(label).width;
         const rect = {
             x: sx - (textWidth / 2) + CITY_LABEL_OFFSET_X - CITY_LABEL_PADDING,
             y: sy - (fontSize / 2) + CITY_LABEL_OFFSET_Y - CITY_LABEL_PADDING,
@@ -1375,10 +1431,10 @@ function drawCityLabels(transform = STATE.zoomTransform, collision = null) {
         addToGrid(rect);
         const textX = sx + CITY_LABEL_OFFSET_X;
         const textY = sy + CITY_LABEL_OFFSET_Y;
-        ctx.strokeText(label, textX, textY);
-        ctx.fillText(label, textX, textY);
+        drawCtx.strokeText(label, textX, textY);
+        drawCtx.fillText(label, textX, textY);
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawCtx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function getCountryLabelRankLimit(k) {
@@ -1388,9 +1444,9 @@ function getCountryLabelRankLimit(k) {
     return 5;
 }
 
-function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
+function drawCountryLabels(transform = STATE.zoomTransform, collision = null, drawCtx = ctx) {
     if (!showCountryLabels || !COUNTRIES?.features || !STATE.projection) return;
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    drawCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     updateCountryLabelPoints();
 
     const { x, y, k } = transform;
@@ -1464,22 +1520,22 @@ function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
         return false;
     };
 
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = COUNTRY_LABEL_COLOR;
-    ctx.strokeStyle = COUNTRY_LABEL_HALO;
-    ctx.lineWidth = COUNTRY_LABEL_HALO_WIDTH;
-    ctx.lineJoin = "round";
+    drawCtx.textAlign = "center";
+    drawCtx.textBaseline = "middle";
+    drawCtx.fillStyle = COUNTRY_LABEL_COLOR;
+    drawCtx.strokeStyle = COUNTRY_LABEL_HALO;
+    drawCtx.lineWidth = COUNTRY_LABEL_HALO_WIDTH;
+    drawCtx.lineJoin = "round";
 
     const fontSize = 10 * Math.max(0.9, Math.min(1.1, Math.pow(k, 0.1)));
-    ctx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
+    drawCtx.font = `${fontSize}px ${UI_FONT_FAMILY}`;
 
     for (const d of visible) {
         const [px, py] = d.f._labelPoint;
         const sx = px * k + x;
         const sy = py * k + y;
         const labelText = d.label.toUpperCase();
-        const textWidth = ctx.measureText(labelText).width;
+        const textWidth = drawCtx.measureText(labelText).width;
         const rect = {
             x: sx - (textWidth / 2) - COUNTRY_LABEL_PADDING,
             y: sy - (fontSize / 2) - COUNTRY_LABEL_PADDING,
@@ -1488,10 +1544,10 @@ function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
         };
         if (collides(rect)) continue;
         addToGrid(rect);
-        ctx.strokeText(labelText, sx, sy);
-        ctx.fillText(labelText, sx, sy);
+        drawCtx.strokeText(labelText, sx, sy);
+        drawCtx.fillText(labelText, sx, sy);
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    drawCtx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 /* =========================================================
@@ -1505,9 +1561,29 @@ function drawCountryLabels(transform = STATE.zoomTransform, collision = null) {
    Glyph rendering
    ========================================================= */
 
+function collectVisibleClimateData(transform, viewportPadding) {
+    visibleClimateDataScratch.length = 0;
+    if (!STATE.data || !STATE.data.length) return visibleClimateDataScratch;
+
+    const { x, y, k } = transform;
+    const viewportLeft = -viewportPadding - x / k;
+    const viewportRight = (STATE.width - x) / k + viewportPadding;
+    const viewportTop = -viewportPadding - y / k;
+    const viewportBottom = (STATE.height - y) / k + viewportPadding;
+
+    for (const d of STATE.data) {
+        const x0 = d.px;
+        const y0 = d.py;
+        if (!Number.isFinite(x0) || !Number.isFinite(y0)) continue;
+        if (x0 < viewportLeft || x0 > viewportRight || y0 < viewportTop || y0 > viewportBottom) continue;
+        visibleClimateDataScratch.push(d);
+    }
+    return visibleClimateDataScratch;
+}
+
 // Draw a station's precipitation and temperature glyph at projected position (fill + outline + January line)
 // lockedType: null (not locked) or kg_type string (locked to this type)
-function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredType = null) {
+function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredType = null, quality = RENDER_QUALITY_SETTLED) {
     // Quickly determine if this glyph should be faded
     // Priority: locked > hovered (if not locked) > none
     let glyphAlpha = 1.0;
@@ -1532,6 +1608,8 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
     const precipFill = d.glyphPrecipFill || adjustColor(d.baseColor, PRECIP_SAT_FACTOR, PRECIP_L_FACTOR);
     const tempFill = d.glyphTempFill || adjustColor(d.baseColor, TEMP_FILL_SAT_FACTOR, TEMP_FILL_L_FACTOR);
     const tempStroke = d.glyphTempStroke || adjustColor(d.baseColor, TEMP_LINE_SAT_FACTOR, TEMP_LINE_L_FACTOR);
+    const drawTempFill = quality !== RENDER_QUALITY_INTERACTIVE;
+    const drawJanLine = quality !== RENDER_QUALITY_INTERACTIVE || R_BASE >= INTERACTION_GLYPH_JAN_LINE_MIN_RADIUS;
 
     drawCtx.save();
     drawCtx.translate(cx, cy);
@@ -1547,16 +1625,17 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
     drawCtx.globalAlpha = PRECIP_ALPHA * glyphAlpha;
     drawCtx.fill();
 
-    // Temp fill
-    drawCtx.beginPath();
-    for (let i = 0; i < GLYPH_ANGLE_COUNT; i++) {
-        const r = tempR12[i] * R_BASE;
-        drawCtx.lineTo(GLYPH_SIN[i] * r, -GLYPH_COS[i] * r);
+    if (drawTempFill) {
+        drawCtx.beginPath();
+        for (let i = 0; i < GLYPH_ANGLE_COUNT; i++) {
+            const r = tempR12[i] * R_BASE;
+            drawCtx.lineTo(GLYPH_SIN[i] * r, -GLYPH_COS[i] * r);
+        }
+        drawCtx.closePath();
+        drawCtx.fillStyle = tempFill;
+        drawCtx.globalAlpha = TEMP_FILL_ALPHA * glyphAlpha;
+        drawCtx.fill();
     }
-    drawCtx.closePath();
-    drawCtx.fillStyle = tempFill;
-    drawCtx.globalAlpha = TEMP_FILL_ALPHA * glyphAlpha;
-    drawCtx.fill();
 
     // Temp outline
     drawCtx.beginPath();
@@ -1571,13 +1650,15 @@ function drawGlyphOnContext(drawCtx, d, transform, lockedType = null, hoveredTyp
     drawCtx.stroke();
 
     // Jan line
-    const janR = tempR12[0] * R_BASE;
-    drawCtx.beginPath();
-    drawCtx.moveTo(0, 0);
-    drawCtx.lineTo(0, -janR);
-    drawCtx.lineWidth = glyphLineWidth;
-    drawCtx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
-    drawCtx.stroke();
+    if (drawJanLine) {
+        const janR = tempR12[0] * R_BASE;
+        drawCtx.beginPath();
+        drawCtx.moveTo(0, 0);
+        drawCtx.lineTo(0, -janR);
+        drawCtx.lineWidth = glyphLineWidth;
+        drawCtx.globalAlpha = JAN_LINE_ALPHA * glyphAlpha;
+        drawCtx.stroke();
+    }
 
     drawCtx.restore();
 }
@@ -1593,22 +1674,11 @@ function drawPointsBatchOnContext(drawCtx, transform, lockedType = null, hovered
     // Skip rendering if points are too small to see
     if (pointRadius < MIN_POINT_RENDER_RADIUS) return;
 
-    // Compute viewport bounds to skip off-screen points
-    const viewportPadding = pointRadius + 2;
-    const viewportLeft = -viewportPadding - x / k;
-    const viewportRight = (STATE.width - x) / k + viewportPadding;
-    const viewportTop = -viewportPadding - y / k;
-    const viewportBottom = (STATE.height - y) / k + viewportPadding;
-
-    STATE.data.forEach(d => {
+    const visibleData = collectVisibleClimateData(transform, pointRadius + 2);
+    visibleData.forEach(d => {
         const x0 = d.px;
         const y0 = d.py;
         if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
-        // Quick viewport check in projected coordinates (before transform)
-        if (x0 < viewportLeft || x0 > viewportRight || 
-            y0 < viewportTop || y0 > viewportBottom) {
-            return; // Skip this point, it's off-screen
-        }
 
         const cx = x0 * k + x;
         const cy = y0 * k + y;
@@ -1638,24 +1708,15 @@ function drawPointsBatchOnContext(drawCtx, transform, lockedType = null, hovered
     drawCtx.globalAlpha = 1.0;
 }
 
-function drawGlyphsBatchOnContext(drawCtx, transform, lockedType = null, hoveredType = null) {
+function drawGlyphsBatchOnContext(drawCtx, transform, lockedType = null, hoveredType = null, quality = RENDER_QUALITY_SETTLED) {
     if (!STATE.data || !STATE.data.length) return;
     const { x, y, k } = transform;
     const maxGlyphRadius = STATE.symbolRadius * DENSITY_FACTOR * PRECIP_RADIUS_SCALE * k;
     if (maxGlyphRadius < MIN_GLYPH_RENDER_RADIUS) return;
 
-    const viewportPadding = maxGlyphRadius + 2;
-    const viewportLeft = -viewportPadding - x / k;
-    const viewportRight = (STATE.width - x) / k + viewportPadding;
-    const viewportTop = -viewportPadding - y / k;
-    const viewportBottom = (STATE.height - y) / k + viewportPadding;
-
-    STATE.data.forEach(d => {
-        const x0 = d.px;
-        const y0 = d.py;
-        if (!Number.isFinite(x0) || !Number.isFinite(y0)) return;
-        if (x0 < viewportLeft || x0 > viewportRight || y0 < viewportTop || y0 > viewportBottom) return;
-        drawGlyphOnContext(drawCtx, d, transform, lockedType, hoveredType);
+    const visibleData = collectVisibleClimateData(transform, maxGlyphRadius + 2);
+    visibleData.forEach(d => {
+        drawGlyphOnContext(drawCtx, d, transform, lockedType, hoveredType, quality);
     });
 }
 
@@ -1764,15 +1825,15 @@ function renderAxisLabelSpecs(ctx, specs, fontSize, scale = 1) {
     specs.lonLabels.forEach(renderLine);
 }
 
-function drawAxisLabels(transform = STATE.zoomTransform) {
+function drawAxisLabels(transform = STATE.zoomTransform, drawCtx = ctx) {
     if (!STATE.projection) return;
     // Skip if neither graticules nor geographic lines are visible
     if (!showGraticules && !showGeoLines) return;
-    ctx.save();
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+    drawCtx.save();
+    drawCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     const specs = buildAxisLabelSpecs(STATE.width, STATE.height, transform);
-    renderAxisLabelSpecs(ctx, specs, 11);
-    ctx.restore();
+    renderAxisLabelSpecs(drawCtx, specs, 11);
+    drawCtx.restore();
 }
 
 export function drawAxisLabelsForExport(targetCtx, overlayScale, fontSize = 26, showLabels = true) {
@@ -1784,6 +1845,19 @@ export function drawAxisLabelsForExport(targetCtx, overlayScale, fontSize = 26, 
     targetCtx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
     renderAxisLabelSpecs(targetCtx, specs, fontSize, overlayScale);
     targetCtx.restore();
+}
+
+function drawLabelsToCache(transform = STATE.zoomTransform) {
+    if (!labelLayerCacheCtx) return;
+    if (hasLabelLayerCache(transform)) return;
+
+    labelLayerCacheCtx.setTransform(1, 0, 0, 1, 0, 0);
+    labelLayerCacheCtx.clearRect(0, 0, labelLayerCache.width, labelLayerCache.height);
+    const labelCollision = (showCityLabels || showCountryLabels) ? { grid: new Map(), size: LABEL_CACHE_GRID_SIZE } : null;
+    drawCountryLabels(transform, labelCollision, labelLayerCacheCtx);
+    drawCityLabels(transform, labelCollision, labelLayerCacheCtx);
+    drawAxisLabels(transform, labelLayerCacheCtx);
+    labelLayerKey = makeLabelLayerKey(transform);
 }
 
 function ensureBaseLayerCaches(transform = STATE.zoomTransform, options = { ocean: true, countries: true }) {
@@ -1861,7 +1935,12 @@ function scheduleRefineStep(job, fn) {
     }
 }
 
-function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = true, drawMarkers = true } = {}) {
+function composeFrameFromCaches({
+    transform = STATE.zoomTransform,
+    drawLabels = true,
+    drawMarkers = true,
+    drawGuides = true
+} = {}) {
     if (!hasRenderableMapFrame()) {
         drawMapBackground(transform);
         return;
@@ -1875,19 +1954,21 @@ function composeFrameFromCaches({ transform = STATE.zoomTransform, drawLabels = 
         ctx.drawImage(countriesCache, 0, 0);
     }
     drawMapContentFrame(transform);
-    // Graticules/geographic lines expect DPR transform space.
-    ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
-    if (showGraticules) drawGraticules(transform);
-    if (showGeoLines) drawGeographicLines(transform);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (drawGuides) {
+        // Graticules/geographic lines expect DPR transform space.
+        ctx.setTransform(CANVAS_DPR, 0, 0, CANVAS_DPR, 0, 0);
+        if (showGraticules) drawGraticules(transform);
+        if (showGeoLines) drawGeographicLines(transform);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
     if (climateLayerCache) {
         ctx.drawImage(climateLayerCache, 0, 0);
     }
-    const labelCollision = (showCityLabels || showCountryLabels) ? { grid: new Map(), size: 160 } : null;
-    drawCountryLabels(transform, labelCollision);
-    drawCityLabels(transform, labelCollision);
-    if (drawLabels && (showGraticules || showGeoLines)) {
-        drawAxisLabels(transform);
+    if (drawLabels) {
+        drawLabelsToCache(transform);
+        if (labelLayerCache && hasLabelLayerCache(transform)) {
+            ctx.drawImage(labelLayerCache, 0, 0);
+        }
     }
     if (drawMarkers) {
         updateHoverCircle();
@@ -1901,6 +1982,7 @@ function redrawFastPostInteraction() {
         drawMapBackground();
         return;
     }
+    renderQuality = RENDER_QUALITY_SETTLED;
     const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
@@ -1908,7 +1990,7 @@ function redrawFastPostInteraction() {
     initCaches();
     resizeCaches();
     drawClimateLayerToCache(transform, lockedType, hoveredType);
-    composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+    composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true, drawGuides: false });
 }
 
 function startRefineJob(epoch) {
@@ -1930,12 +2012,12 @@ function startRefineJob(epoch) {
         const transform = job.transform;
         if (job.step === 0) {
             ensureBaseLayerCaches(transform, { ocean: true, countries: false });
-            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true, drawGuides: false });
         } else if (job.step === 1) {
             ensureBaseLayerCaches(transform, { ocean: false, countries: true });
-            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true });
+            composeFrameFromCaches({ transform, drawLabels: false, drawMarkers: true, drawGuides: false });
         } else {
-            composeFrameFromCaches({ transform, drawLabels: true, drawMarkers: true });
+            composeFrameFromCaches({ transform, drawLabels: true, drawMarkers: true, drawGuides: true });
             pendingRefineJob = null;
             clearMapBusyLoadingOverlay();
             return;
@@ -1962,6 +2044,7 @@ function redrawGlyphsOnly() {
     }
     initCaches();
     resizeCaches();
+    renderQuality = RENDER_QUALITY_INTERACTIVE;
     const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
@@ -1984,6 +2067,7 @@ function redraw(skipAxisLabels = false) {
         clearMapBusyLoadingOverlay();
         return;
     }
+    renderQuality = RENDER_QUALITY_SETTLED;
     const transform = makeTransformSnapshot();
     const { locked, data: lockedData } = getLockState();
     const lockedType = locked ? (lockedData ? lockedData.kg_type : null) : null;
@@ -1992,7 +2076,7 @@ function redraw(skipAxisLabels = false) {
     resizeCaches();
     drawClimateLayerToCache(transform, lockedType, hoveredType);
     ensureBaseLayerCaches(transform, { ocean: true, countries: true });
-    composeFrameFromCaches({ transform, drawLabels: !skipAxisLabels, drawMarkers: true });
+    composeFrameFromCaches({ transform, drawLabels: !skipAxisLabels, drawMarkers: true, drawGuides: true });
     if (!isZooming && !pendingRefineJob) {
         clearMapBusyLoadingOverlay();
     }
@@ -2596,20 +2680,20 @@ function showGlyphAutoSwitchToast() {
     toast.classList.add("show");
 }
 
-function setSymbolStyleProgrammatically(nextStyle) {
+function setSymbolStyleProgrammatically(nextStyle, source = "unknown") {
     if (!nextStyle || symbolStyle === nextStyle) {
         return false;
     }
 
     if (typeof window.setSymbolStyleSelection === "function") {
-        return window.setSymbolStyleSelection(nextStyle);
+        return window.setSymbolStyleSelection(nextStyle, source);
     }
 
     const target = document.querySelector(`input[name="symbol-style"][value="${nextStyle}"]`);
     if (target) {
         target.checked = true;
     }
-    dispatcher.call("symbolStyleChanged", null, nextStyle);
+    dispatcher.call("symbolStyleChanged", null, nextStyle, { source });
     return true;
 }
 
@@ -2644,8 +2728,8 @@ function maybeAutoSwitchToGlyph(transform) {
         return;
     }
 
-    const changed = setSymbolStyleProgrammatically("glyph");
-    if (changed) {
+    const changed = setSymbolStyleProgrammatically("glyph", "auto");
+    if (changed && !STATE.hasManuallyEnteredGlyphThisSession) {
         showGlyphAutoSwitchToast();
     }
 }
@@ -2706,7 +2790,10 @@ dispatcher.on("layoutChanged.mapSizing", () => {
 });
 
 // Handle symbol style change (point vs glyph mode)
-dispatcher.on('symbolStyleChanged.map', newStyle => {
+dispatcher.on('symbolStyleChanged.map', (newStyle, metadata = {}) => {
+    if (newStyle === "glyph" && metadata?.source === "manual") {
+        STATE.hasManuallyEnteredGlyphThisSession = true;
+    }
     symbolStyle = newStyle;
     // Maintain current lock state while switching symbol style
     redraw();

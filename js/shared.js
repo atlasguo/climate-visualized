@@ -24,7 +24,8 @@ export const STATE = {
     mobileSheetOpen: false,
     mobileOptionsOpen: false,
     visualViewport: null,
-    hasAutoSwitchedGlyphThisSession: false
+    hasAutoSwitchedGlyphThisSession: false,
+    hasManuallyEnteredGlyphThisSession: false
 };
 
 export const dispatcher = d3.dispatch(
