@@ -459,6 +459,16 @@ export function drawTemperatureScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "4,4")
         .attr("opacity", 0.6)
+        .style("pointer-events", "none");
+
+    g.append("line")
+        .attr("class", "reference-line-hit")
+        .attr("x1", x(-40))
+        .attr("y1", y(-40))
+        .attr("x2", x(30))
+        .attr("y2", y(30))
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 16)
         .style("pointer-events", "stroke")
         .style("cursor", "pointer")
         .on("mouseover", function(event) {
@@ -467,7 +477,7 @@ export function drawTemperatureScatter() {
         .on("mouseout", function() {
             hideTooltip();
         });
-    bindTooltipInteraction(g.selectAll(".reference-line"), "y=x reference line", "temp-reference-line");
+    bindTooltipInteraction(g.selectAll(".reference-line-hit"), "y=x reference line", "temp-reference-line");
 
     // Coordinate axes (for scatter plot)
     g.append("g")

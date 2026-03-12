@@ -181,11 +181,13 @@ function updateMobileSheetSummary(d) {
     if (!title || !subtitle) return;
 
     if (!d) {
-        title.textContent = "Tap the map to inspect climate";
-        subtitle.textContent = "Select a location to open charts";
+        title.classList.add("mobile-sheet-title-empty");
+        title.textContent = "Select or search a location to explore climates.";
+        subtitle.textContent = "";
         return;
     }
 
+    title.classList.remove("mobile-sheet-title-empty");
     const latDir = d.lat >= 0 ? "N" : "S";
     const lonDir = d.lon >= 0 ? "E" : "W";
     const coordText = `${Math.abs(d.lat).toFixed(2)}° ${latDir}, ${Math.abs(d.lon).toFixed(2)}° ${lonDir}`;
@@ -362,7 +364,7 @@ export function getChartSize() {
     const margin = getOverallChartMargin();
     const width = Math.max(180, getPanelWidth() - (isMobileLayout() ? 0 : 8));
     const height = isMobileLayout()
-        ? Math.round(clampValue(width * 0.72, 240, 320))
+        ? Math.round(clampValue(width * 0.88, 296, 392))
         : Math.round(getAvailableChartHeight() * 1.5);
 
     return {
@@ -379,7 +381,7 @@ export function getDetailChartSize(svgElement, kind = "monthly") {
     const width = getSvgWidth(svgElement, 240);
     const defaultDesktopHeight = kind === "scatter" ? 392 : 352;
     const height = isMobileLayout()
-        ? Math.round(clampValue(width * 0.64, 200, 280))
+        ? Math.round(clampValue(width * 0.8, 248, 348))
         : Math.max(svgElement?.getBoundingClientRect?.().height || 0, defaultDesktopHeight);
 
     return {

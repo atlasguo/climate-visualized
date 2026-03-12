@@ -41,6 +41,8 @@ import {
     findNearestScreen,
     canUseHoverPreview,
     isMobileLayout,
+    setMobileOptionsOpen,
+    setMobileSheetOpen,
     runAfterViewportSettles
 } from "./shared.js";
 import { loadData, loadCountries, loadOcean, loadCityLabels } from "./data.js";
@@ -90,6 +92,8 @@ let refineStartDelayTimer = null;
 let mapBusyLoadingTimer = null;
 let mapBusyLoadingVisible = false;
 let pendingMobileLockFocusRaf = null;
+let previousGlyphAutoSwitchRelativeZoom = 1;
+const GLYPH_AUTO_SWITCH_RELATIVE_THRESHOLD = 8;
 const CITY_LABEL_CAPITAL_COLOR = "#111111";
 const CITY_LABEL_NON_CAPITAL_COLOR = "#8d949b";
 const CITY_LABEL_HALO = "rgba(255, 255, 255, 0.75)";
@@ -782,6 +786,7 @@ function resize() {
             constrainTransform();
             syncZoomTransform();
         }
+        previousGlyphAutoSwitchRelativeZoom = getRelativeZoomFromHome() ?? 1;
         updateZoomControlState();
         invalidateCaches();
         resizeInteractionSnapshot();
@@ -2265,7 +2270,7 @@ function updateHoverCircle() {
 
 function updateSearchMarker() {
     if (!STATE.projection || !searchMarker || !searchPoint) {
-        searchLayer.style("display", "none");
+        hideSearchResultVisual();
         return;
     }
 
@@ -2459,6 +2464,7 @@ const zoomBehavior = d3.zoom()
             zoomEndRaf = null;
         }
         STATE.zoomTransform = e.transform;
+        maybeAutoSwitchToGlyph(STATE.zoomTransform);
         updateZoomControlState(STATE.zoomTransform);
         isZooming = true;
         scheduleFullRedraw = true;
@@ -2554,6 +2560,96 @@ hoverCircle
 let searchMarker = null;
 let searchPoint = null; // Store the search input location for relative positioning
 
+function showGlyphAutoSwitchToast() {
+    const mapWrapperNode = document.getElementById("map-wrapper");
+    if (!mapWrapperNode) {
+        return;
+    }
+
+    if (isMobileLayout()) {
+        setMobileOptionsOpen(false);
+        setMobileSheetOpen(false);
+    }
+
+    let toast = document.getElementById("glyph-auto-switch-toast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "glyph-auto-switch-toast";
+        toast.className = "lock-toast glyph-toast";
+        toast.innerHTML = [
+            "<div class=\"glyph-toast-title\">Switched to Climate Glyph Mode</div>",
+            "<div class=\"glyph-toast-meta\">",
+            "<div><strong>Outline</strong> Temperature</div>",
+            "<div><strong>Inner</strong> Precipitation</div>",
+            "<div><strong>Order</strong> January at top (clockwise)</div>",
+            "</div>",
+            "<div class=\"glyph-toast-body\">To switch back, click Map Options (top right) &gt; Mode &gt; Point.</div>",
+            "<button type=\"button\" class=\"lock-toast-btn glyph-toast-dismiss\">Got it</button>"
+        ].join("");
+        toast.querySelector(".glyph-toast-dismiss")?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            toast.classList.remove("show");
+        });
+        mapWrapperNode.appendChild(toast);
+    }
+
+    toast.classList.add("show");
+}
+
+function setSymbolStyleProgrammatically(nextStyle) {
+    if (!nextStyle || symbolStyle === nextStyle) {
+        return false;
+    }
+
+    if (typeof window.setSymbolStyleSelection === "function") {
+        return window.setSymbolStyleSelection(nextStyle);
+    }
+
+    const target = document.querySelector(`input[name="symbol-style"][value="${nextStyle}"]`);
+    if (target) {
+        target.checked = true;
+    }
+    dispatcher.call("symbolStyleChanged", null, nextStyle);
+    return true;
+}
+
+function getRelativeZoomFromHome(transform = STATE.zoomTransform) {
+    const currentScale = transform?.k ?? MIN_ZOOM_SCALE;
+    const homeScale = homeZoomTransform?.k ?? MIN_ZOOM_SCALE;
+    if (!(Number.isFinite(currentScale) && Number.isFinite(homeScale) && homeScale > 0)) {
+        return null;
+    }
+    return currentScale / homeScale;
+}
+
+function maybeAutoSwitchToGlyph(transform) {
+    const currentRelativeZoom = getRelativeZoomFromHome(transform);
+    if (!Number.isFinite(currentRelativeZoom)) {
+        return;
+    }
+
+    const crossedThreshold = previousGlyphAutoSwitchRelativeZoom <= GLYPH_AUTO_SWITCH_RELATIVE_THRESHOLD
+        && currentRelativeZoom > GLYPH_AUTO_SWITCH_RELATIVE_THRESHOLD;
+    previousGlyphAutoSwitchRelativeZoom = currentRelativeZoom;
+
+    if (!crossedThreshold) {
+        return;
+    }
+    if (STATE.hasAutoSwitchedGlyphThisSession) {
+        return;
+    }
+
+    STATE.hasAutoSwitchedGlyphThisSession = true;
+    if (symbolStyle === "glyph") {
+        return;
+    }
+
+    const changed = setSymbolStyleProgrammatically("glyph");
+    if (changed) {
+        showGlyphAutoSwitchToast();
+    }
+}
+
 // Respect lock/unlock events from chart: freeze or resume hover highlight
 dispatcher.on('lock.map', d => {
     setPanelLocked(true, d || null);
@@ -2588,9 +2684,7 @@ dispatcher.on('unlock.map', () => {
     hoveredDatum = null;
 
     clearHoverHighlight();
-    
-    searchMarker = null;
-    searchLayer.style('display', 'none');
+    clearSearchResultState();
     overlayNode.style.cursor = 'default';
     
     // Force redraw to restore all glyphs
@@ -2713,6 +2807,40 @@ function syncSearchClearButton(value) {
     searchClearBtn.classList.toggle("show", !!value?.trim());
 }
 
+function hideSearchResultVisual() {
+    searchLayer.style("display", "none");
+}
+
+function clearSearchResultState() {
+    if (searchInput) {
+        searchInput.value = "";
+        searchInput.blur();
+    }
+    syncSearchClearButton("");
+    searchSuggestions.classList.remove("show");
+    searchPoint = null;
+    searchMarker = null;
+    hideSearchResultVisual();
+}
+
+function getFirstSearchSuggestionItem() {
+    return searchSuggestions?.querySelector?.(".search-suggestion-item[data-lat][data-lon]") || null;
+}
+
+function openSearchSuggestionItem(item) {
+    if (!item) {
+        return false;
+    }
+    const lat = parseFloat(item.dataset.lat);
+    const lon = parseFloat(item.dataset.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return false;
+    }
+    const label = item.textContent.trim();
+    finalizeSearchSelection(lat, lon, label);
+    return true;
+}
+
 function finalizeSearchSelection(lat, lon, label) {
     const nextLabel = (label || "Search result").trim();
 
@@ -2776,10 +2904,7 @@ async function searchLocations(query) {
         // Add click handlers to suggestions
         document.querySelectorAll('.search-suggestion-item[data-lat]').forEach(item => {
             item.addEventListener('click', () => {
-                const lat = parseFloat(item.dataset.lat);
-                const lon = parseFloat(item.dataset.lon);
-                const label = item.textContent.trim();
-                finalizeSearchSelection(lat, lon, label);
+                openSearchSuggestionItem(item);
             });
         });
     } catch (error) {
@@ -2825,7 +2950,7 @@ function jumpToLocation(lat, lon, label) {
 
         if (nearest) {
             getCountryNameForDatum(nearest);
-            dispatcher.call("select", null, nearest);
+            dispatcher.call("searchSelect", null, nearest);
             // Store nearest climate data point - use nearest's coordinates, not search point
             searchMarker = { lat: nearest.lat, lon: nearest.lon, label: (label || 'Search result').replace(/,/g, '\n') };
         } else {
@@ -2864,16 +2989,23 @@ if (searchInput) {
             searchLocations(e.target.value);
         }, 300);
     });
+
+    searchInput.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") {
+            return;
+        }
+        const firstItem = getFirstSearchSuggestionItem();
+        if (!firstItem) {
+            return;
+        }
+        e.preventDefault();
+        openSearchSuggestionItem(firstItem);
+    });
     
     // Clear search function
     if (searchClearBtn) {
         searchClearBtn.addEventListener('click', () => {
-            searchInput.value = '';
-            syncSearchClearButton("");
-            searchSuggestions.classList.remove('show');
-            searchLayer.style('display', 'none');
-            searchPoint = null;
-            searchMarker = null;
+            clearSearchResultState();
         });
     }
 
@@ -2993,6 +3125,7 @@ export async function init() {
     computeMapExtent();
     homeZoomTransform = computeHomeZoomTransform();
     syncZoomTransform(homeZoomTransform);
+    previousGlyphAutoSwitchRelativeZoom = getRelativeZoomFromHome() ?? 1;
     // Build quadtree for fast screen-space queries
     buildQuadtree();
     // Initialize caches

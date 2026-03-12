@@ -23,12 +23,13 @@ export const STATE = {
     compactControlsMode: "regular",
     mobileSheetOpen: false,
     mobileOptionsOpen: false,
-    visualViewport: null
+    visualViewport: null,
+    hasAutoSwitchedGlyphThisSession: false
 };
 
 export const dispatcher = d3.dispatch(
     "hover", "hoverend",
-    "select", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged", "symbolStyleChanged",
+    "select", "searchSelect", "viewChanged", "dataLoaded", "lock", "unlock", "tabChanged", "symbolStyleChanged",
     "layoutChanged", "mobileSheetChanged", "mobileOptionsChanged"
 );
 
@@ -73,7 +74,7 @@ function syncUiStateToDom() {
     const sheetToggle = getMobileSheetToggleButton();
     if (sheetToggle) {
         sheetToggle.setAttribute("aria-expanded", String(sheetOpen));
-        sheetToggle.textContent = sheetOpen ? "Close" : "Open";
+        sheetToggle.setAttribute("aria-label", sheetOpen ? "Close details panel" : "Open details panel");
     }
 
     const optionsToggle = getMapOptionsToggleButton();

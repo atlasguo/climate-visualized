@@ -126,6 +126,18 @@ function setupSymbolSelector() {
         return;
     }
 
+    window.setSymbolStyleSelection = (nextStyle) => {
+        const target = document.querySelector(`input[name="symbol-style"][value="${nextStyle}"]`);
+        if (!target) {
+            return false;
+        }
+        radioButtons.forEach(radio => {
+            radio.checked = radio === target;
+        });
+        dispatcher.call("symbolStyleChanged", null, nextStyle);
+        return true;
+    };
+
     radioButtons.forEach(radio => {
         radio.addEventListener("change", () => {
             const selectedStyle = document.querySelector('input[name="symbol-style"]:checked').value;
@@ -147,6 +159,9 @@ function setupResponsiveShell() {
     optionsToggle?.addEventListener("click", (event) => {
         event.stopPropagation();
         if (!usesCollapsedMapControls()) return;
+        if (isMobileLayout() && !STATE.mobileOptionsOpen) {
+            setMobileSheetOpen(false);
+        }
         toggleMobileOptions();
     });
 

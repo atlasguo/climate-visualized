@@ -567,6 +567,15 @@ dispatcher.on("select.chart", d => {
     updatePanel(d, true);
 });
 
+dispatcher.on("searchSelect.chart", d => {
+    if (!d) return;
+
+    setPanelLocked(true, d);
+    updateCoordinateDisplay(d);
+    dispatcher.call("lock", null, d);
+    updatePanel(d, true);
+});
+
 /* =========================================================
    Centralized Hover Interaction
    Only the active tab's update functions are called to optimize performance

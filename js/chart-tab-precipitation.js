@@ -488,6 +488,16 @@ export function drawPrecipitationScatter() {
         .attr("stroke-width", 1)
         .attr("stroke-dasharray", "4,4")
         .attr("opacity", 0.6)
+        .style("pointer-events", "none");
+
+    g.append("line")
+        .attr("class", "reference-line-hit")
+        .attr("x1", x(0))
+        .attr("y1", y(0))
+        .attr("x2", x(800))
+        .attr("y2", y(800))
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 16)
         .style("pointer-events", "stroke")
         .style("cursor", "pointer")
         .on("mouseover", function(event) {
@@ -496,7 +506,7 @@ export function drawPrecipitationScatter() {
         .on("mouseout", function() {
             hideTooltip();
         });
-    bindTooltipInteraction(g.selectAll(".reference-line"), "y=x reference line", "precip-reference-line");
+    bindTooltipInteraction(g.selectAll(".reference-line-hit"), "y=x reference line", "precip-reference-line");
 
     // Coordinate axes (for scatter plot) with equally-spaced precipitation ticks
     g.append("g")
