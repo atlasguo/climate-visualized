@@ -4,7 +4,7 @@
    ========================================================= */
 
 import {
-    MONTH_FULL,
+    getHemisphereMonthLabel,
     tempColor, showTooltip, hideTooltip, bindTooltipInteraction, getDetailChartSize,
     RANGE_OPACITY_UNLOCKED,
     RANGE_OPACITY_LOCKED_ACTIVE,
@@ -21,6 +21,10 @@ let hoverDatum = null;
 
 // Cache for expensive computations
 let scaleCache = null;
+
+function formatTemperatureMonthValue(datum, monthIndex, value) {
+    return `${getHemisphereMonthLabel(datum, monthIndex)}: ${value.toFixed(1)}\u00B0C`;
+}
 
 function getActiveDatum() {
     return getActiveDatumHelper(PANEL_LOCKED && LOCKED_DATA, LOCKED_DATA, hoverDatum);
@@ -58,7 +62,7 @@ function updateTemperatureScatterHover(d) {
         .style("cursor", "pointer")
         .on("mouseover", function(event, v) {
             if (v && typeof v.t_01 === "number" && typeof v.t_07 === "number") {
-                showTooltip(event, `Jan: ${v.t_01.toFixed(1)}°C, Jul: ${v.t_07.toFixed(1)}°C`);
+                showTooltip(event, `${formatTemperatureMonthValue(v, 0, v.t_01)}, ${formatTemperatureMonthValue(v, 6, v.t_07)}`);
             }
         })
         .on("mouseout", function() {
@@ -71,7 +75,7 @@ function updateTemperatureScatterHover(d) {
     dots.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("circle"),
-        (_, v) => `Jan: ${v.t_01.toFixed(1)}°C, Jul: ${v.t_07.toFixed(1)}°C`,
+        (_, v) => `${formatTemperatureMonthValue(v, 0, v.t_01)}, ${formatTemperatureMonthValue(v, 6, v.t_07)}`,
         "temp-hover-dot"
     );
 
@@ -140,7 +144,7 @@ function updateMonthlyTemperatureHover(d) {
         .style("cursor", "pointer")
         .on("mouseover", function(event) {
             if (d && d.t) {
-                const temps = d.t.map((t, i) => `${MONTH_FULL[i]}: ${t.toFixed(1)}°C`).join(', ');
+                const temps = d.t.map((t, i) => formatTemperatureMonthValue(d, i, t)).join(', ');
                 showTooltip(event, temps);
             }
         })
@@ -153,7 +157,7 @@ function updateMonthlyTemperatureHover(d) {
     paths.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("path.chart-hover-line"),
-        () => (d && d.t ? d.t.map((t, i) => `${MONTH_FULL[i]}: ${t.toFixed(1)}°C`).join(", ") : ""),
+        () => (d && d.t ? d.t.map((t, i) => formatTemperatureMonthValue(d, i, t)).join(", ") : ""),
         "temp-hover-line"
     );
 
@@ -168,7 +172,7 @@ function updateMonthlyTemperatureHover(d) {
         .style("pointer-events", "all")
         .on("mouseover", function(event, m) {
             d3.select(this).attr("r", 5);
-            showTooltip(event, `${MONTH_FULL[m.month - 1]}: ${m.temp.toFixed(1)}°C`);
+            showTooltip(event, formatTemperatureMonthValue(d, m.month - 1, m.temp));
         })
         .on("mouseout", function() {
             d3.select(this).attr("r", 3);
@@ -183,7 +187,7 @@ function updateMonthlyTemperatureHover(d) {
     markers.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("circle.chart-hover-month-marker"),
-        (_, m) => `${MONTH_FULL[m.month - 1]}: ${m.temp.toFixed(1)}°C`,
+        (_, m) => formatTemperatureMonthValue(d, m.month - 1, m.temp),
         "temp-hover-month"
     );
 

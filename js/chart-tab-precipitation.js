@@ -4,7 +4,7 @@
    ========================================================= */
 
 import {
-    MONTH_FULL,
+    getHemisphereMonthLabel,
     precipColor, showTooltip, hideTooltip, bindTooltipInteraction, getDetailChartSize,
     RANGE_OPACITY_UNLOCKED,
     RANGE_OPACITY_LOCKED_ACTIVE,
@@ -21,6 +21,10 @@ let hoverDatum = null;
 
 // Cache for expensive computations
 let scaleCache = null;
+
+function formatPrecipitationMonthValue(datum, monthIndex, value) {
+    return `${getHemisphereMonthLabel(datum, monthIndex)}: ${value.toFixed(1)} mm`;
+}
 
 function getActiveDatum() {
     return getActiveDatumHelper(PANEL_LOCKED && LOCKED_DATA, LOCKED_DATA, hoverDatum);
@@ -58,7 +62,7 @@ function updatePrecipitationScatterHover(d) {
         .style("cursor", "pointer")
         .on("mouseover", function(event, v) {
             if (v && typeof v.p_01 === "number" && typeof v.p_07 === "number") {
-                showTooltip(event, `Jan: ${v.p_01.toFixed(1)} mm, Jul: ${v.p_07.toFixed(1)} mm`);
+                showTooltip(event, `${formatPrecipitationMonthValue(v, 0, v.p_01)}, ${formatPrecipitationMonthValue(v, 6, v.p_07)}`);
             }
         })
         .on("mouseout", function() {
@@ -71,7 +75,7 @@ function updatePrecipitationScatterHover(d) {
     dots.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("circle"),
-        (_, v) => `Jan: ${v.p_01.toFixed(1)} mm, Jul: ${v.p_07.toFixed(1)} mm`,
+        (_, v) => `${formatPrecipitationMonthValue(v, 0, v.p_01)}, ${formatPrecipitationMonthValue(v, 6, v.p_07)}`,
         "precip-hover-dot"
     );
 
@@ -141,7 +145,7 @@ function updateMonthlyPrecipitationHover(d) {
         .style("cursor", "pointer")
         .on("mouseover", function(event) {
             if (d && d.p) {
-                const precips = d.p.map((p, i) => `${MONTH_FULL[i]}: ${p.toFixed(1)} mm`).join(', ');
+                const precips = d.p.map((p, i) => formatPrecipitationMonthValue(d, i, p)).join(', ');
                 showTooltip(event, precips);
             }
         })
@@ -154,7 +158,7 @@ function updateMonthlyPrecipitationHover(d) {
     paths.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("path.chart-hover-line"),
-        () => (d && d.p ? d.p.map((p, i) => `${MONTH_FULL[i]}: ${p.toFixed(1)} mm`).join(", ") : ""),
+        () => (d && d.p ? d.p.map((p, i) => formatPrecipitationMonthValue(d, i, p)).join(", ") : ""),
         "precip-hover-line"
     );
 
@@ -169,7 +173,7 @@ function updateMonthlyPrecipitationHover(d) {
         .style("pointer-events", "all")
         .on("mouseover", function(event, m) {
             d3.select(this).attr("r", 5);
-            showTooltip(event, `${MONTH_FULL[m.month - 1]}: ${m.precip.toFixed(1)} mm`);
+            showTooltip(event, formatPrecipitationMonthValue(d, m.month - 1, m.precip));
         })
         .on("mouseout", function() {
             d3.select(this).attr("r", 3);
@@ -184,7 +188,7 @@ function updateMonthlyPrecipitationHover(d) {
     markers.exit().remove();
     bindTooltipInteraction(
         layer.selectAll("circle.chart-hover-month-marker"),
-        (_, m) => `${MONTH_FULL[m.month - 1]}: ${m.precip.toFixed(1)} mm`,
+        (_, m) => formatPrecipitationMonthValue(d, m.month - 1, m.precip),
         "precip-hover-month"
     );
 

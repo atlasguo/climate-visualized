@@ -222,6 +222,21 @@ export function setExportingState(value) {
 export const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+export function getHemisphereAdjustedMonthIndex(datum, monthIndex) {
+    if (!Number.isInteger(monthIndex) || monthIndex < 0 || monthIndex >= MONTH_FULL.length) {
+        return monthIndex;
+    }
+    if (!datum || typeof datum.lat !== "number" || !isFinite(datum.lat) || datum.lat >= 0) {
+        return monthIndex;
+    }
+    return (monthIndex + 6) % MONTH_FULL.length;
+}
+
+export function getHemisphereMonthLabel(datum, monthIndex, labels = MONTH_FULL) {
+    const adjustedIndex = getHemisphereAdjustedMonthIndex(datum, monthIndex);
+    return labels[adjustedIndex] ?? labels[monthIndex] ?? "";
+}
+
 /* =========================================================
    Koppen classification dictionaries
    ========================================================= */
