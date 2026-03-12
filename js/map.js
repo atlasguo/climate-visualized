@@ -17,6 +17,7 @@ const UI_FONT_FAMILY = getComputedStyle(document.documentElement)
 // Search box elements
 const searchInput = document.getElementById("search-input");
 const searchSuggestions = document.getElementById("search-suggestions");
+const searchClearBtn = document.getElementById("search-clear");
 
 // Map display toggle elements
 const toggleOcean = document.getElementById("toggle-ocean");
@@ -30,7 +31,18 @@ const toggleCountryLabels = document.getElementById("toggle-country-labels");
    Global application state (moved to shared module)
    ========================================================= */
 
-import { STATE, dispatcher, adjustColor, tempToR, precipToR, buildQuadtree, findNearestScreen, canUseHoverPreview, isMobileLayout } from "./shared.js";
+import {
+    STATE,
+    dispatcher,
+    adjustColor,
+    tempToR,
+    precipToR,
+    buildQuadtree,
+    findNearestScreen,
+    canUseHoverPreview,
+    isMobileLayout,
+    runAfterViewportSettles
+} from "./shared.js";
 import { loadData, loadCountries, loadOcean, loadCityLabels } from "./data.js";
 import { showLoading, hideLoading } from "./loading.js";
 import { getLockState, setPanelLocked } from "./chart-tab-overall.js";
@@ -2694,6 +2706,45 @@ function onMouseLeave() {
 
 let searchTimeout;
 
+function syncSearchClearButton(value) {
+    if (!searchClearBtn) {
+        return;
+    }
+    searchClearBtn.classList.toggle("show", !!value?.trim());
+}
+
+function finalizeSearchSelection(lat, lon, label) {
+    const nextLabel = (label || "Search result").trim();
+
+    if (searchInput) {
+        searchInput.value = nextLabel;
+    }
+    syncSearchClearButton(nextLabel);
+    searchSuggestions.classList.remove("show");
+
+    const runJump = () => {
+        if (isMobileLayout() && searchInput) {
+            searchInput.blur();
+        }
+        jumpToLocation(lat, lon, nextLabel);
+    };
+
+    if (!isMobileLayout()) {
+        runJump();
+        return;
+    }
+
+    if (searchInput) {
+        searchInput.blur();
+    }
+
+    runAfterViewportSettles(runJump, {
+        debounceMs: 150,
+        maxWaitMs: 640,
+        fallbackMs: 140
+    });
+}
+
 async function searchLocations(query) {
     if (!query || query.length < 2) {
         searchSuggestions.classList.remove('show');
@@ -2728,9 +2779,7 @@ async function searchLocations(query) {
                 const lat = parseFloat(item.dataset.lat);
                 const lon = parseFloat(item.dataset.lon);
                 const label = item.textContent.trim();
-                jumpToLocation(lat, lon, label);
-                searchInput.value = label;
-                searchSuggestions.classList.remove('show');
+                finalizeSearchSelection(lat, lon, label);
             });
         });
     } catch (error) {
@@ -2806,17 +2855,9 @@ function jumpToLocation(lat, lon, label) {
 }
 
 if (searchInput) {
-    const searchClearBtn = document.getElementById('search-clear');
-    
     searchInput.addEventListener('input', (e) => {
         // Show/hide clear button based on input value
-        if (searchClearBtn) {
-            if (e.target.value.trim()) {
-                searchClearBtn.classList.add('show');
-            } else {
-                searchClearBtn.classList.remove('show');
-            }
-        }
+        syncSearchClearButton(e.target.value);
         
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
@@ -2828,7 +2869,7 @@ if (searchInput) {
     if (searchClearBtn) {
         searchClearBtn.addEventListener('click', () => {
             searchInput.value = '';
-            searchClearBtn.classList.remove('show');
+            syncSearchClearButton("");
             searchSuggestions.classList.remove('show');
             searchLayer.style('display', 'none');
             searchPoint = null;

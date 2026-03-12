@@ -212,12 +212,25 @@ svg text {
     top: 16px;
     left: 16px;
     z-index: 110;
+    --search-visible-height: var(--map-top-control-height);
     width: min(400px, calc(100% - 32px));
+}
+
+.search-input-shell {
+    position: relative;
+    width: 100%;
+    height: var(--search-visible-height);
+}
+
+.search-input-scale-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
 }
 
 .search-input {
     width: 100%;
-    height: var(--map-top-control-height);
+    height: 100%;
     padding: 0 38px 0 12px;
     border: 1px solid #d0d0d0;
     border-radius: 3px;
@@ -268,7 +281,7 @@ svg text {
 
 .search-suggestions {
     position: absolute;
-    top: calc(100% + 6px);
+    top: calc(var(--search-visible-height) + 6px);
     left: 0;
     width: 100%;
     background: rgba(255, 255, 255, 0.96);
@@ -855,6 +868,31 @@ svg text {
     left: 12px;
     right: 124px;
     width: auto;
+    --search-visible-height: var(--map-top-control-height);
+}
+
+#app[data-layout="mobile"] .search-input-shell {
+    overflow: visible;
+}
+
+#app[data-layout="mobile"] .search-input-scale-frame {
+    width: calc(100% / var(--mobile-search-input-scale));
+    height: calc(var(--search-visible-height) / var(--mobile-search-input-scale));
+    transform: scale(var(--mobile-search-input-scale));
+    transform-origin: top left;
+}
+
+#app[data-layout="mobile"] .search-input {
+    font-size: 16px;
+    padding: 0 calc(38px / var(--mobile-search-input-scale)) 0 calc(12px / var(--mobile-search-input-scale));
+    border-radius: calc(var(--radius-control) / var(--mobile-search-input-scale));
+}
+
+#app[data-layout="mobile"] .search-clear-btn {
+    right: calc(10px / var(--mobile-search-input-scale));
+    width: calc(24px / var(--mobile-search-input-scale));
+    height: calc(24px / var(--mobile-search-input-scale));
+    font-size: calc(16px / var(--mobile-search-input-scale));
 }
 
 #app[data-layout="mobile"] #map-options-toggle {

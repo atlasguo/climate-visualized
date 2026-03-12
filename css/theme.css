@@ -26,6 +26,12 @@
     --map-top-control-padding-x: 14px;
     --map-zoom-control-size: 34px;
     --map-zoom-control-size-collapsed: 40px;
+    --mobile-search-input-scale: 0.8125;
+    --visual-viewport-width: 100vw;
+    --visual-viewport-height: 100vh;
+    --visual-viewport-offset-top: 0px;
+    --visual-viewport-offset-left: 0px;
+    --visual-viewport-scale: 1;
 
     /* Map / backdrop */
     --map-bg: #eeeeee;

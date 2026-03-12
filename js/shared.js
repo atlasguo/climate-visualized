@@ -22,7 +22,8 @@ export const STATE = {
     layoutMode: "desktop",
     compactControlsMode: "regular",
     mobileSheetOpen: false,
-    mobileOptionsOpen: false
+    mobileOptionsOpen: false,
+    visualViewport: null
 };
 
 export const dispatcher = d3.dispatch(
@@ -152,6 +153,89 @@ export function syncLayoutMode(width = window.innerWidth) {
     }
 
     return nextMode;
+}
+
+function getViewportMetrics() {
+    const vv = window.visualViewport;
+    return {
+        width: vv?.width || window.innerWidth || document.documentElement.clientWidth || 0,
+        height: vv?.height || window.innerHeight || document.documentElement.clientHeight || 0,
+        offsetTop: vv?.offsetTop || 0,
+        offsetLeft: vv?.offsetLeft || 0,
+        scale: vv?.scale || 1
+    };
+}
+
+function syncVisualViewportCssVars(metrics) {
+    const root = document.documentElement;
+    if (!root) {
+        return;
+    }
+    root.style.setProperty("--visual-viewport-width", `${metrics.width}px`);
+    root.style.setProperty("--visual-viewport-height", `${metrics.height}px`);
+    root.style.setProperty("--visual-viewport-offset-top", `${metrics.offsetTop}px`);
+    root.style.setProperty("--visual-viewport-offset-left", `${metrics.offsetLeft}px`);
+    root.style.setProperty("--visual-viewport-scale", String(metrics.scale));
+}
+
+export function syncVisualViewportMetrics() {
+    const metrics = getViewportMetrics();
+    STATE.visualViewport = metrics;
+    syncVisualViewportCssVars(metrics);
+    return metrics;
+}
+
+export function runAfterViewportSettles(callback, {
+    debounceMs = 140,
+    maxWaitMs = 520,
+    fallbackMs = 120
+} = {}) {
+    if (typeof callback !== "function") {
+        return;
+    }
+
+    const vv = window.visualViewport;
+    if (!vv) {
+        syncVisualViewportMetrics();
+        window.setTimeout(() => {
+            syncVisualViewportMetrics();
+            callback();
+        }, fallbackMs);
+        return;
+    }
+
+    let finished = false;
+    let debounceTimer = null;
+    let maxWaitTimer = null;
+
+    const cleanup = () => {
+        vv.removeEventListener("resize", onViewportChange);
+        vv.removeEventListener("scroll", onViewportChange);
+        window.clearTimeout(debounceTimer);
+        window.clearTimeout(maxWaitTimer);
+    };
+
+    const finish = () => {
+        if (finished) {
+            return;
+        }
+        finished = true;
+        cleanup();
+        syncVisualViewportMetrics();
+        callback();
+    };
+
+    const onViewportChange = () => {
+        syncVisualViewportMetrics();
+        window.clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(finish, debounceMs);
+    };
+
+    syncVisualViewportMetrics();
+    vv.addEventListener("resize", onViewportChange);
+    vv.addEventListener("scroll", onViewportChange);
+    onViewportChange();
+    maxWaitTimer = window.setTimeout(finish, maxWaitMs);
 }
 
 export function setMobileSheetOpen(value) {

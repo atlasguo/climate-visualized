@@ -10,6 +10,7 @@ import {
     isMobileLayout,
     setMobileOptionsOpen,
     setMobileSheetOpen,
+    syncVisualViewportMetrics,
     syncLayoutMode,
     toggleMobileOptions,
     toggleMobileSheet,
@@ -18,10 +19,12 @@ import {
 import { showLoading, hideLoading } from "./loading.js";
 
 let layoutRefreshTimer = null;
+let viewportRefreshTimer = null;
 let mapInitialized = false;
 let webFontsReady = false;
 let fontRefreshApplied = false;
 
+syncVisualViewportMetrics();
 syncLayoutMode(window.innerWidth);
 
 function getActiveTabName() {
@@ -50,6 +53,17 @@ function refreshTextRenderingAfterFontsLoad() {
         scheduleActiveTabRefresh(0);
         window.redrawMap?.();
     }, 0);
+}
+
+function scheduleViewportResponsiveRefresh(delay = 160) {
+    window.clearTimeout(viewportRefreshTimer);
+    viewportRefreshTimer = window.setTimeout(() => {
+        if (!mapInitialized) {
+            return;
+        }
+        window.dispatchEvent(new Event("resize"));
+        scheduleActiveTabRefresh(0);
+    }, delay);
 }
 
 // Initialize map asynchronously
@@ -149,6 +163,7 @@ function setupResponsiveShell() {
     });
 
     window.addEventListener("resize", () => {
+        syncVisualViewportMetrics();
         syncLayoutMode(window.innerWidth);
     });
 
@@ -176,6 +191,30 @@ function setupResponsiveShell() {
     });
 }
 
+function setupVisualViewportSync() {
+    syncVisualViewportMetrics();
+
+    const vv = window.visualViewport;
+    const activeSearchInput = document.getElementById("search-input");
+    if (!vv) {
+        return;
+    }
+
+    const onViewportChange = () => {
+        syncVisualViewportMetrics();
+        if (!isMobileLayout()) {
+            return;
+        }
+        if (activeSearchInput && document.activeElement === activeSearchInput) {
+            return;
+        }
+        scheduleViewportResponsiveRefresh(160);
+    };
+
+    vv.addEventListener("resize", onViewportChange);
+    vv.addEventListener("scroll", onViewportChange);
+}
+
 function setupFontRefresh() {
     if (!document.fonts?.ready) {
         return;
@@ -193,5 +232,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupPanelTabs();
     setupSymbolSelector();
     setupResponsiveShell();
+    setupVisualViewportSync();
     setupFontRefresh();
 });
